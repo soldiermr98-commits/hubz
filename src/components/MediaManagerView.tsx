@@ -168,7 +168,11 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
     setBusy(true);
     setMessage(null);
     const res = await deleteMediaItems(
-      { ids: targetIds, detach_usages: forceDetach || forceBanners, force: forceBanners },
+      {
+        ids: targetIds,
+        detach_usages: forceDetach || forceBanners,
+        ...(forceBanners ? { force: true } : {}),
+      },
       csrfToken
     );
     setBusy(false);
