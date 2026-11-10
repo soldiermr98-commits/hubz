@@ -120,4 +120,38 @@ final class DB
     {
         return (int) self::connection()->lastInsertId();
     }
+
+    /**
+     * بررسی امن وجود جدول در دیتابیس فعال.
+     * روی برخی هاست‌های اشتراکی، خواندن information_schema برای کاربر دیتابیس محدود است
+     * و با وجود وجود جدول، نتیجهٔ خالی برمی‌گردد؛ به همین دلیل پس از پاسخ خالی،
+     * با SHOW TABLES دوباره بررسی می‌شود تا «آماده‌نبودنِ کاذب» رخ ندهد.
+     * نام جدول فقط با الگوی [a-z0-9_] پذیرفته می‌شود.
+     */
+    public static function tableExists(string $table): bool
+    {
+        if (!preg_match('/^[a-z0-9_]+$/', $table)) {
+            return false;
+        }
+        try {
+            $row = self::fetchOne(
+                'SELECT 1 AS ok FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :t LIMIT 1',
+                ['t' => $table]
+            );
+            if ($row !== null) {
+                return true;
+            }
+            // Fallback for hosts that hide information_schema from the DB user.
+            // SHOW TABLES cannot take placeholders reliably on all versions, and
+            // LIKE treats "_" as a wildcard, so compare exact names in PHP instead.
+            foreach (self::query('SHOW TABLES')->fetchAll(PDO::FETCH_NUM) as $row) {
+                if ((string)($row[0] ?? '') === $table) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (RuntimeException) {
+            return false;
+        }
+    }
 }

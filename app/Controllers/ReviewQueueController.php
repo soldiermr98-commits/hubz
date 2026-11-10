@@ -310,14 +310,8 @@ final class ReviewQueueController
 
     private static function tableExists(string $table): bool
     {
-        if (!preg_match('/^[a-z0-9_]+$/', $table)) {
-            return false;
-        }
-        $row = DB::fetchOne(
-            'SELECT 1 AS ok FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :t LIMIT 1',
-            ['t' => $table]
-        );
-        return (bool)$row;
+        // DB::tableExists falls back to SHOW TABLES on hosts that hide information_schema.
+        return DB::tableExists($table);
     }
 
     private static function deleteIfTableExists(string $table, string $whereSql, array $params): void

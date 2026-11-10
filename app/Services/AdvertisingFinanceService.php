@@ -19,7 +19,8 @@ final class AdvertisingFinanceService
         if (!AdvertisingReportingService::schemaReady()) return false;
         try {
             foreach (['advertising_contract_requests','advertising_receipt_claims','advertising_receipt_unique','advertising_contract_status_log','advertising_gateway_settings','advertising_gateway_settings_log','advertising_online_payments','advertising_online_audit'] as $table) {
-                if (DB::fetchOne('SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:t', ['t'=>$table]) === null) return false;
+                // DB::tableExists falls back to SHOW TABLES on hosts that hide information_schema.
+                if (!DB::tableExists($table)) return false;
             }
             // A partially-created table is not a completed, conflict-checked backfill.
             return DB::fetchOne('SELECT migration FROM schema_migrations WHERE migration=:m', ['m'=>'010_advertising_receipt_uniqueness.sql']) !== null;

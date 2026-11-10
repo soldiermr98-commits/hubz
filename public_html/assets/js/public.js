@@ -76,6 +76,24 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', trackPageView);
   else trackPageView();
 
+  // بازگشت نرم به بالای صفحه؛ دکمه فقط پس از عبور از یک صفحه‌نمایش نمایان می‌شود.
+  function initBackTop() {
+    var btn = document.querySelector('[data-hx-back-top]');
+    if (!btn) return;
+    var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    function update() {
+      if (window.scrollY > window.innerHeight * 0.9) btn.setAttribute('data-visible', '1');
+      else btn.removeAttribute('data-visible');
+    }
+    window.addEventListener('scroll', update, { passive: true });
+    update();
+    btn.addEventListener('click', function () {
+      window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initBackTop);
+  else initBackTop();
+
   // Anonymous, approximate banner counters. A view is counted once for an
   // element when its image has loaded and intersects the visible viewport;
   // reloads and bots can count again. They are not unique or billing evidence.

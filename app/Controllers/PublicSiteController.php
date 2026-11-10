@@ -46,6 +46,7 @@ final class PublicSiteController
             'info-circle' => '<path d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10Z" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 8v5M11.995 16h.009" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>',
             'message-question' => '<path d="M17 18.43h-4l-4.45 2.96A.997.997 0 0 1 7 20.56v-2.13c-3 0-5-2-5-5v-6c0-3 2-5 5-5h10c3 0 5 2 5 5v6c0 3-2 5-5 5Z" stroke-width="1.75" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 11.36v-.21c0-.68.42-1.04.84-1.33.41-.28.82-.64.82-1.3 0-.92-.74-1.66-1.66-1.66-.92 0-1.66.74-1.66 1.66M11.995 13.75h.01" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>',
             'award' => '<path d="M12 15c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7Z" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M7.52 13.52v7.39c0 .9.63 1.34 1.4.96l2.68-1.27c.22-.11.58-.11.8 0l2.69 1.27c.77.37 1.4-.07 1.4-.96v-7.39" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>',
+            'arrow-up' => '<path d="M12 20V4M12 4l-6.5 6.5M12 4l6.5 6.5" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>',
             default => '<circle cx="12" cy="12" r="9" stroke-width="1.75"/>',
         };
         return '<svg class="' . htmlspecialchars($cls, ENT_QUOTES, 'UTF-8') . '" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' . $paths . '</svg>';
@@ -94,6 +95,10 @@ final class PublicSiteController
 
         $businesses = self::fetchPublishedBusinesses("b.status = 'published'", [], 12);
 
+        $totalPublished = 0;
+        foreach ($cities as $c) { $totalPublished += (int)$c['biz_count']; }
+        $publishedArticlesTotal = (int)(DB::fetchOne("SELECT COUNT(*) AS n FROM articles WHERE status = 'published'", [])['n'] ?? 0);
+
         $baseUrl = self::baseUrl();
         $schemas = [
             [
@@ -125,6 +130,20 @@ final class PublicSiteController
                     </span>
                     <h1>بهترین کافه‌ها، رستوران‌ها و خدمات استان گیلان</h1>
                     <p>فهرست کسب‌وکارها بر اساس اطلاعات گردآوری‌شده و بازبینی تحریریه ارائه می‌شود.</p>
+                    <div class="hx-hero-stats" role="list" aria-label="آمار کلی حامی‌هاب">
+                        <div class="hx-hero-stat" role="listitem">
+                            <strong dir="ltr"><?= self::e(self::faDigits((string)$totalPublished)) ?></strong>
+                            <span>کسب‌وکار منتشرشده</span>
+                        </div>
+                        <div class="hx-hero-stat" role="listitem">
+                            <strong dir="ltr"><?= self::e(self::faDigits((string)count($cities))) ?></strong>
+                            <span>شهر فعال</span>
+                        </div>
+                        <div class="hx-hero-stat" role="listitem">
+                            <strong dir="ltr"><?= self::e(self::faDigits((string)$publishedArticlesTotal)) ?></strong>
+                            <span>راهنمای منتشرشده</span>
+                        </div>
+                    </div>
                     <div class="hx-city-pills">
                         <?php foreach ($cities as $city): ?>
                             <a class="hx-city-pill" href="/city/<?= self::e($city['slug']) ?>/">
@@ -1779,6 +1798,7 @@ final class PublicSiteController
                     <span class="hx-place-no-image"><?= self::icon('location', 'hx-icon hx-icon-lg') ?><span>تصویر ثبت نشده</span></span>
                 <?php endif; ?>
                 <?php if (!empty($biz['promoted'])): ?><span class="hx-place-sponsored">جایگاه ویژه</span><?php endif; ?>
+                <?php if ($rank > 0 && $rank <= 3): ?><span class="hx-place-rank" title="رتبه <?= self::e((string)$rank) ?> در این فهرست"><?= self::e((string)$rank) ?></span><?php endif; ?>
             </a>
             <div class="hx-place-body">
                 <?php if (!empty($biz['promoted'])): ?><span class="hx-visually-hidden">جایگاه ویژه</span><?php endif; ?>
@@ -1879,7 +1899,7 @@ final class PublicSiteController
     <meta name="twitter:image" content="<?= self::e($baseUrl) ?>/assets/img/logo-hx-card.webp">
     <link rel="preload" href="/assets/fonts/Vazirmatn-Regular.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/assets/fonts/Vazirmatn-Bold.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="/assets/css/public.css?v=s10.4">
+    <link rel="stylesheet" href="/assets/css/public.css?v=s11.0">
     <!-- hhx-ad-until:<?= $adUntil ?> -->
     <!-- hhx-sponsor-until:<?= max(0, (int)($data['sponsor_until'] ?? 0)) ?> -->
     <?php foreach ($schemas as $schema):
@@ -1889,6 +1909,7 @@ final class PublicSiteController
     <?php endforeach; ?>
 </head>
 <body>
+    <a class="hx-skip-link" href="#hx-content">پرش به محتوای اصلی</a>
     <header class="hx-header">
         <div class="hx-container hx-header-inner">
             <a href="/" class="hx-brand">
@@ -1909,37 +1930,58 @@ final class PublicSiteController
     </header>
 
     <?= $ad['html'] ?>
+    <div id="hx-content">
     <?= $body ?>
+    </div>
     <?= $footerAd['html'] ?>
 
     <footer class="hx-footer">
-        <div class="hx-container hx-footer-inner">
-            <div style="display:flex;align-items:center;gap:0.75rem;">
-                <img src="/assets/img/favicon.png" alt="HamiHubX" width="32" height="32" style="border-radius:8px;">
-                <div>
-                    <strong style="color:#fff;">حامی‌هاب گیلان (HamiHubX.ir)</strong> — فهرست کسب‌وکارهای استان گیلان.
+        <div class="hx-container hx-footer-grid">
+            <div class="hx-footer-col hx-footer-about">
+                <div style="display:flex;align-items:center;gap:0.65rem;margin-bottom:0.65rem;">
+                    <img src="/assets/img/favicon.png" alt="HamiHubX" width="36" height="36" style="border-radius:9px;">
+                    <strong style="color:#fff;font-size:1.02rem;">حامی‌هاب گیلان <span dir="ltr" style="font-weight:800;">HamiHubX.ir</span></strong>
                 </div>
+                <p>فهرست کسب‌وکارهای استان گیلان؛ معرفی کافه‌ها، رستوران‌ها، مراکز خدماتی و اقامتی بر اساس اطلاعات گردآوری‌شده و بازبینی تحریریه.</p>
             </div>
-            <div>بخشی از داده‌ها از <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">مشارکت‌کنندگان OpenStreetMap</a> تحت مجوز ODbL است.</div>
-            <?php if ($advertisingReady): ?>
-            <details class="hx-ad-contact" id="advertise">
-                <summary>درخواست تبلیغات در حامی‌هاب</summary>
-                <p>برای بررسی جایگاه و بنر، درخواست خود را بفرستید. نام، شماره تماس و پیام فقط برای پیگیری درخواست در پنل مدیر نگهداری می‌شود.</p>
-                <form data-hx-public-form="advertising" action="/api/v1/public/advertising-inquiry" method="post">
-                    <label>نام <input name="name" required maxlength="150" autocomplete="name"></label>
-                    <label>شماره تماس <input name="phone" type="tel" required maxlength="32" autocomplete="tel" dir="ltr"></label>
-                    <label>پیام (اختیاری) <textarea name="message" maxlength="1000" rows="3"></textarea></label>
-                    <label class="hx-ad-consent"><input type="checkbox" name="consent" required> با ثبت اطلاعات بالا برای پیگیری درخواست تبلیغات موافقم.</label>
-                    <div class="hx-ad-honeypot" aria-hidden="true"><label>Website <input name="website_hp" tabindex="-1" autocomplete="off"></label></div>
-                    <button type="submit" class="hx-btn">ارسال درخواست تبلیغات</button>
-                    <p data-hx-form-msg role="status" aria-live="polite"></p>
-                    <noscript>برای ارسال امن فرم، جاوااسکریپت را فعال کنید.</noscript>
-                </form>
-            </details>
-            <?php endif; ?>
+            <nav class="hx-footer-col" aria-label="دسترسی سریع">
+                <h3>دسترسی سریع</h3>
+                <a href="/">صفحه اصلی</a>
+                <a href="/city/rasht/">بهترین‌های رشت</a>
+                <a href="/city/bandar-anzali/">بهترین‌های بندر انزلی</a>
+                <a href="/city/lahijan/">بهترین‌های لاهیجان</a>
+                <a href="#advertise">درخواست تبلیغات</a>
+            </nav>
+            <div class="hx-footer-col">
+                <h3>داده و استناد</h3>
+                <p>بخشی از داده‌ها از <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">مشارکت‌کنندگان OpenStreetMap</a> تحت مجوز ODbL است.</p>
+                <p>امتیازها از منبع اعلام‌شده هر کسب‌وکار ثبت می‌شود و میانگین منابع مختلف با هم جمع نمی‌شود.</p>
+            </div>
         </div>
+        <?php if ($advertisingReady): ?>
+        <div class="hx-container">
+        <details class="hx-ad-contact" id="advertise">
+            <summary>درخواست تبلیغات در حامی‌هاب</summary>
+            <p>برای بررسی جایگاه و بنر، درخواست خود را بفرستید. نام، شماره تماس و پیام فقط برای پیگیری درخواست در پنل مدیر نگهداری می‌شود.</p>
+            <form data-hx-public-form="advertising" action="/api/v1/public/advertising-inquiry" method="post">
+                <label>نام <input name="name" required maxlength="150" autocomplete="name"></label>
+                <label>شماره تماس <input name="phone" type="tel" required maxlength="32" autocomplete="tel" dir="ltr"></label>
+                <label>پیام (اختیاری) <textarea name="message" maxlength="1000" rows="3"></textarea></label>
+                <label class="hx-ad-consent"><input type="checkbox" name="consent" required> با ثبت اطلاعات بالا برای پیگیری درخواست تبلیغات موافقم.</label>
+                <div class="hx-ad-honeypot" aria-hidden="true"><label>Website <input name="website_hp" tabindex="-1" autocomplete="off"></label></div>
+                <button type="submit" class="hx-btn">ارسال درخواست تبلیغات</button>
+                <p data-hx-form-msg role="status" aria-live="polite"></p>
+                <noscript>برای ارسال امن فرم، جاوااسکریپت را فعال کنید.</noscript>
+            </form>
+        </details>
+        </div>
+        <?php endif; ?>
     </footer>
-    <script src="/assets/js/public.js?v=s11.0" defer></script>
+    <button type="button" class="hx-back-top" data-hx-back-top aria-label="بازگشت به بالای صفحه" hidden>
+        <?= self::icon('arrow-up', 'hx-icon') ?>
+        <span class="hx-visually-hidden">بازگشت به بالا</span>
+    </button>
+    <script src="/assets/js/public.js?v=s12.0" defer></script>
 </body>
 </html>
         <?php
@@ -1951,11 +1993,21 @@ final class PublicSiteController
         if (!headers_sent()) {
             header('X-Robots-Tag: noindex, follow');
         }
+        $body = '<main class="hx-container" style="padding:3rem 1rem;">'
+            . '<div class="hx-card" style="text-align:center;padding:2.75rem 1.5rem;max-width:640px;margin:0 auto;">'
+            . '<div style="font-size:2.6rem;font-weight:800;line-height:1;background:linear-gradient(135deg,#09132e 0%,#0047cc 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:.75rem;" dir="ltr">۴۰۴</div>'
+            . '<h1 style="margin:0 0 .5rem;">صفحه مورد نظر یافت نشد</h1>'
+            . '<p class="hx-card-desc">' . self::e($message) . '</p>'
+            . '<div class="hx-card-actions" style="justify-content:center;margin-top:1.25rem;">'
+            . '<a class="hx-btn hx-btn-primary" href="/">بازگشت به صفحه اصلی</a>'
+            . '<a class="hx-btn hx-btn-outline" href="/city/rasht/">بهترین‌های رشت</a>'
+            . '<a class="hx-btn hx-btn-outline" href="/city/lahijan/">بهترین‌های لاهیجان</a>'
+            . '</div></div></main>';
         $html = self::renderLayout([
             'title'       => 'صفحه یافت نشد (404) | حامی‌هاب گیلان',
             'description' => $message,
             'noindex'     => true,
-            'body'        => '<main class="hx-container" style="padding:3rem 1rem;"><div class="hx-card" style="text-align:center;padding:2.5rem;"><h1>۴۰۴ — صفحه مورد نظر یافت نشد</h1><p class="hx-card-desc">' . self::e($message) . '</p><div style="margin-top:1rem;"><a class="hx-btn hx-btn-primary" href="/">بازگشت به صفحه اصلی حامی‌هاب</a></div></div></main>',
+            'body'        => $body,
         ]);
         Response::html($html, 404);
     }
@@ -2067,5 +2119,14 @@ final class PublicSiteController
     private static function e(mixed $val): string
     {
         return htmlspecialchars((string)$val, ENT_QUOTES, 'UTF-8');
+    }
+
+    /**
+     * Convert Latin digits to Persian digits for user-facing numeric labels.
+     * Used only for display; stored data and URLs stay Latin.
+     */
+    private static function faDigits(string $value): string
+    {
+        return strtr($value, ['0' => '۰', '1' => '۱', '2' => '۲', '3' => '۳', '4' => '۴', '5' => '۵', '6' => '۶', '7' => '۷', '8' => '۸', '9' => '۹']);
     }
 }
