@@ -1061,7 +1061,7 @@ export const BusinessesManagerView: React.FC<BusinessesManagerViewProps> = ({
                     <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
                       <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer">
                         <Upload className="w-3.5 h-3.5" />
-                        <span>{uploadingMedia ? 'در حال تبدیل به WebP...' : 'انتخاب و تبدیل به WebP'}</span>
+                        <span>{uploadingMedia ? 'در حال بهینه‌سازی تصویر...' : 'انتخاب تصویر (بهینه‌سازی خودکار · GIF متحرک حفظ می‌شود)'}</span>
                         <input
                           type="file"
                           accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif"

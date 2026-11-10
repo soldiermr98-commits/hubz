@@ -12,6 +12,7 @@ use App\Core\Response;
 use App\Services\AdvertisingService;
 use App\Services\AdminMailService;
 use App\Services\AdvertisingReportingService;
+use App\Services\MediaLibraryService;
 use App\Services\Normalizer;
 use DateTimeImmutable;
 use Throwable;
@@ -85,6 +86,12 @@ final class AdvertisingController
         $start = self::parseDate(self::text($request, 'starts_at'));
         $end = self::parseDate(self::text($request, 'ends_at'));
         if ($start !== null && $end !== null && $start >= $end) Response::json(['ok'=>false, 'error'=>'پایان باید بعد از شروع باشد.'], 422);
+        $oldMediaId = 0;
+        if ($id > 0) {
+            $existing = DB::fetchOne('SELECT media_id FROM advertising_banners WHERE id=:id', ['id'=>$id]);
+            if (!$existing) Response::json(['ok'=>false, 'error'=>'بنر موردنظر یافت نشد؛ فهرست را تازه‌سازی کنید.'], 404);
+            $oldMediaId = (int)($existing['media_id'] ?? 0);
+        }
         $params = ['title'=>$title,'alt'=>$alt,'media'=>$mediaId,'url'=>$target,'slot'=>$slot,
             'city'=>$cityId > 0 ? $cityId : null,'category'=>$categoryId > 0 ? $categoryId : null,
             'starts'=>$start,'ends'=>$end,'active'=>$active ? 1 : 0,'priority'=>$priority];
@@ -97,17 +104,51 @@ final class AdvertisingController
             $id = DB::lastInsertId();
         }
         Cache::flushAll();
-        Response::json(['ok'=>true, 'id'=>$id, 'message'=>'بنر ذخیره شد؛ فقط در صورت فعال بودن و رسیدن زمان، نمایش داده می‌شود.']);
+        // پاک‌سازی خودکار تصویر قبلی هنگام تعویض تصویر بنر تا هیچ فایل بی‌استفاده‌ای روی هاست باقی نماند.
+        $cleanupNote = '';
+        if ($oldMediaId > 0 && $oldMediaId !== $mediaId) {
+            $cleanupNote = self::cleanupUnreferencedBannerMedia($oldMediaId);
+        }
+        Response::json(['ok'=>true, 'id'=>$id, 'message'=>'بنر ذخیره شد؛ فقط در صورت فعال بودن و رسیدن زمان، نمایش داده می‌شود.' . ($cleanupNote !== '' ? ' ' . $cleanupNote : '')]);
+    }
+
+    /**
+     * حذف کامل تصویر بنر (رکورد دیتابیس + فایل‌های فیزیکی روی هاست) وقتی هیچ بنر دیگری به آن متصل نیست.
+     * اگر تصویر در کسب‌وکار/مقاله دیگری استفاده شده باشد، حذف نمی‌شود (محافظت پیش‌فرض کتابخانه رسانه).
+     */
+    private static function cleanupUnreferencedBannerMedia(int $mediaId): string
+    {
+        if ($mediaId <= 0) return '';
+        try {
+            $stillLinked = DB::fetchOne(
+                'SELECT id FROM advertising_banners WHERE media_id=:m LIMIT 1',
+                ['m'=>$mediaId]
+            );
+            if ($stillLinked) return '';
+            $res = MediaLibraryService::deleteMediaItems([$mediaId], false);
+            $deletedCount = (int)($res['deleted_count'] ?? 0);
+            if ($deletedCount > 0) {
+                return sprintf('تصویر قبلی بنر نیز به‌طور کامل حذف شد (%d فایل از هاست پاک شد).', (int)($res['deleted_files_count'] ?? 0));
+            }
+            if (!empty($res['blocked'])) return 'تصویر قبلی بنر در کسب‌وکار یا مقاله‌ای استفاده می‌شود و در کتابخانه رسانه باقی ماند.';
+            return '';
+        } catch (Throwable $e) {
+            error_log('Banner media cleanup failed: ' . get_class($e) . ': ' . $e->getMessage());
+            return '';
+        }
     }
 
     public static function deleteBanner(Request $request): void
     {
         Auth::requireRole(['admin']); Csrf::verifyOrFail($request); self::requireSchema();
         $id = (int)$request->input('id', 0);
+        $version = (int)$request->input('version', 0);
+        $banner = DB::fetchOne('SELECT id, media_id FROM advertising_banners WHERE id=:id AND version=:version', ['id'=>$id, 'version'=>$version]);
+        if (!$banner) Response::json(['ok'=>false, 'error'=>'بنر تغییر کرده یا یافت نشد؛ فهرست را تازه‌سازی کنید.'], 409);
         $pdo = DB::connection();
         $pdo->beginTransaction();
         try {
-            $deleted = DB::query('DELETE FROM advertising_banners WHERE id=:id AND version=:version', ['id'=>$id,'version'=>(int)$request->input('version', 0)])->rowCount();
+            $deleted = DB::query('DELETE FROM advertising_banners WHERE id=:id AND version=:version', ['id'=>$id,'version'=>$version])->rowCount();
             if ($deleted !== 1) {
                 $pdo->rollBack();
                 Response::json(['ok'=>false, 'error'=>'بنر تغییر کرده یا یافت نشد؛ فهرست را تازه‌سازی کنید.'], 409);
@@ -118,7 +159,16 @@ final class AdvertisingController
             if ($pdo->inTransaction()) $pdo->rollBack();
             throw $e;
         }
-        Cache::flushAll(); Response::json(['ok'=>true, 'message'=>'بنر و آمار آن حذف شد. تصویر رسانه و قراردادهای قبلی حذف نشده‌اند.']);
+        Cache::flushAll();
+        // حذف کامل اثر تصویر: رکورد media و همه فایل‌های فیزیکی آن از هاست پاک می‌شوند.
+        $mediaNote = '';
+        $bannerMediaId = (int)($banner['media_id'] ?? 0);
+        if ($bannerMediaId > 0) {
+            $mediaNote = self::cleanupUnreferencedBannerMedia($bannerMediaId);
+        }
+        Response::json(['ok'=>true, 'message'=>$mediaNote !== ''
+            ? 'بنر و آمار آن حذف شد. ' . $mediaNote
+            : 'بنر و آمار آن حذف شد. تصویر رسانه در جای دیگری استفاده می‌شود یا فاقد تصویر معتبر بود.']);
     }
 
     /** Public best-effort aggregate; intentionally no personal data or per-event log. */

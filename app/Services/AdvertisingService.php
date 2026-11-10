@@ -46,7 +46,8 @@ final class AdvertisingService
 
     public static function validImagePath(string $path): bool
     {
-        return (bool)preg_match('~\A/uploads/[a-zA-Z0-9_\-/]+\.webp\z~', $path);
+        // WebP خروجی استاندارد است؛ GIF متحرک بنرها نیز مجاز است.
+        return (bool)preg_match('~\A/uploads/[a-zA-Z0-9_\-/]+\.(?:webp|gif)\z~', $path);
     }
 
     public static function earliestBoundary(int ...$boundaries): int

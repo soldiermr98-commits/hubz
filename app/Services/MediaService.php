@@ -15,6 +15,9 @@ final class MediaUploadException extends RuntimeException {}
 /**
  * Validate and re-encode all uploads strictly as optimized WebP images (480w, 800w, 1200w),
  * never storing any JPEG/PNG/GIF/BMP/AVIF original on disk, and manage the Media Library.
+ *
+ * استثنای تبلیغاتی: GIFهای «متحرک» برای حفظ انیمیشن دست‌نخورده ذخیره می‌شوند (بدون تبدیل به WebP
+ * که فقط فریم اول را نگه می‌دارد)؛ GIFهای تک‌فریمی مانند قبل به WebP بهینه تبدیل می‌شوند.
  */
 final class MediaService
 {
@@ -31,6 +34,8 @@ final class MediaService
         'image/avif',
     ];
     private const TARGET_WIDTHS = [480, 800, 1200];
+    /** سقف ایمنی برای شمارش فریم‌های GIF هنگام اسکن ساختار بلوکی فایل */
+    private const MAX_GIF_FRAMES_SCAN = 1001;
 
     /**
      * راهنمای استاندارد ابعاد پیشنهادی برای تمام بخش‌های آپلود تصویر در پنل مدیریت
@@ -65,7 +70,7 @@ final class MediaService
                 'aspect_ratio' => 'افقی 5:1 تا 3:1 (تکی تمام‌عرض یا جفت بنر دسکتاپ)',
                 'min_px' => '600 × 200',
                 'fit_mode' => 'نمایش کامل بدون برش (object-fit: contain)',
-                'note' => 'در هر جایگاه حداکثر ۲ بنر فعال کنار هم در دسکتاپ نمایش داده می‌شود. بنرها برش نمی‌خورند و خروجی خودکار WebP ذخیره می‌شود.',
+                'note' => 'در هر جایگاه حداکثر ۲ بنر فعال کنار هم در دسکتاپ نمایش داده می‌شود. بنرها برش نمی‌خورند؛ JPG/PNG/WebP به WebP بهینه تبدیل و GIFهای متحرک با حفظ کامل انیمیشن ذخیره می‌شوند (پیشنهاد: حداکثر ۸ مگابایت).',
             ],
         ];
     }
@@ -114,18 +119,24 @@ final class MediaService
         $finfo = new \finfo(FILEINFO_MIME_TYPE);
         $realMime = (string) $finfo->file($tmpPath);
         if (!in_array($realMime, self::ALLOWED_MIMES, true)) {
-            throw new MediaUploadException('فرمت تصویر مجاز نیست. فقط تصاویر واقعی با فرمت JPG، PNG، WebP، GIF، BMP یا AVIF قابل قبول هستند و همگی به WebP بهینه تبدیل می‌شوند.');
+            throw new MediaUploadException('فرمت تصویر مجاز نیست. فقط تصاویر واقعی با فرمت JPG، PNG، WebP، GIF، BMP یا AVIF قابل قبول هستند؛ به‌جز GIF متحرک که با حفظ انیمیشن ذخیره می‌شود، بقیه به WebP بهینه تبدیل می‌شوند.');
         }
         if (!extension_loaded('gd')) {
             throw new MediaUploadException('افزونه GD روی سرور فعال نیست. لطفاً وضعیت آن را بررسی کنید.');
         }
+        $isAnimatedGif = $realMime === 'image/gif' && self::animatedGifFrameCount($tmpPath) > 1;
         // Never fall back to JPEG or PNG: every saved file on disk must be real WebP.
+        // Animated GIFs are the only exception: converting them to WebP with GD would
+        // silently drop every frame except the first, so they are stored as valid GIF.
         if (
-            !function_exists('imagewebp')
-            || !function_exists('imagecreatefromwebp')
-            || !function_exists('imagetypes')
-            || !defined('IMG_WEBP')
-            || (imagetypes() & IMG_WEBP) === 0
+            !$isAnimatedGif
+            && (
+                !function_exists('imagewebp')
+                || !function_exists('imagecreatefromwebp')
+                || !function_exists('imagetypes')
+                || !defined('IMG_WEBP')
+                || (imagetypes() & IMG_WEBP) === 0
+            )
         ) {
             throw new MediaUploadException('پشتیبانی WebP در افزونه GD فعال نیست؛ برای جلوگیری از ذخیره فرمت غیر WebP عملیات متوقف شد.');
         }
@@ -198,73 +209,127 @@ final class MediaService
         $finalWidth800 = 0;
         $finalHeight800 = 0;
         $finalSizeBytes = 0;
+        $storedMime = 'image/webp';
         $pdo = null;
         $transactionOwned = false;
         $commitAttempted = false;
 
         try {
-            foreach (self::TARGET_WIDTHS as $targetW) {
-                $newW = min($origWidth, $targetW);
-                $newH = max(1, (int) round($origHeight * ($newW / $origWidth)));
-                $canvas = @imagecreatetruecolor($newW, $newH);
-                if (!$canvas instanceof GdImage) {
-                    throw new MediaUploadException('پردازش اندازه تصویر ناموفق بود.');
-                }
-                if (!@imagealphablending($canvas, false) || !@imagesavealpha($canvas, true)) {
-                    throw new MediaUploadException('پردازش شفافیت تصویر ناموفق بود.');
-                }
-                $transparent = imagecolorallocatealpha($canvas, 0, 0, 0, 127);
-                imagefilledrectangle($canvas, 0, 0, $newW, $newH, $transparent);
-                if (!@imagecopyresampled($canvas, $srcImage, 0, 0, 0, 0, $newW, $newH, $origWidth, $origHeight)) {
-                    throw new MediaUploadException('پردازش اندازه تصویر ناموفق بود.');
-                }
-
-                $relPath = "/uploads/{$subDir}/img_{$token}_{$targetW}.webp";
+            if ($isAnimatedGif) {
+                // حفظ کامل انیمیشن: فایل GIF اعتبارسنجی‌شده بدون تغییر بیت‌به‌بیت ذخیره می‌شود
+                // (GD قابلیت رمزگذاری مجدد GIF چندفریمی ندارد و تبدیل به WebP انیمیشن را نابود می‌کند).
+                $relPath = "/uploads/{$subDir}/gif_{$token}.gif";
                 $absPath = $base . '/public_html' . $relPath;
                 $file = @fopen($absPath, 'xb');
                 if ($file === false) {
                     throw new MediaUploadException('امکان ذخیره تصویر وجود ندارد. فضای دیسک و دسترسی پوشه را بررسی کنید.');
                 }
                 $ownedFiles[] = $absPath;
-                $quality = $targetW === 480 ? 80 : 82;
-                $written = false;
-                $flushed = false;
-                $closed = false;
-                try {
-                    $written = @imagewebp($canvas, $file, $quality);
-                    $flushed = @fflush($file);
-                } finally {
-                    $closed = @fclose($file);
-                    unset($canvas);
+                $source = @fopen($tmpPath, 'rb');
+                if (!is_resource($source)) {
+                    throw new MediaUploadException('خواندن فایل آپلودشده ممکن نشد؛ دوباره تلاش کنید.');
                 }
-                if (!$written || !$flushed || !$closed) {
-                    throw new MediaUploadException('ذخیره تصویر WebP کامل نشد. فضای دیسک و دسترسی پوشه را بررسی کنید.');
+                $copiedBytes = @stream_copy_to_stream($source, $file);
+                @fclose($source);
+                $flushed = @fflush($file);
+                $closed = @fclose($file);
+                if ($copiedBytes === false || (int) $copiedBytes !== $actualSize || !$flushed || !$closed) {
+                    throw new MediaUploadException('ذخیره فایل GIF متحرک کامل نشد. فضای دیسک و دسترسی پوشه را بررسی کنید.');
                 }
                 clearstatcache(true, $absPath);
-                $outputSize = @filesize($absPath);
-                $outputInfo = @getimagesize($absPath);
+                $gifSize = @filesize($absPath);
+                $gifInfo = @getimagesize($absPath);
                 if (
-                    !is_int($outputSize)
-                    || $outputSize <= 0
-                    || !is_array($outputInfo)
-                    || ($outputInfo['mime'] ?? '') !== 'image/webp'
-                    || (int) $outputInfo[0] !== $newW
-                    || (int) $outputInfo[1] !== $newH
+                    !is_int($gifSize)
+                    || $gifSize <= 0
+                    || !is_array($gifInfo)
+                    || ($gifInfo['mime'] ?? '') !== 'image/gif'
+                    || (int) $gifInfo[0] !== $origWidth
+                    || (int) $gifInfo[1] !== $origHeight
                 ) {
-                    throw new MediaUploadException('فایل WebP تولیدشده معتبر نیست؛ ذخیره تصویر متوقف شد.');
+                    throw new MediaUploadException('فایل GIF ذخیره‌شده معتبر نیست؛ آپلود متوقف شد.');
                 }
-                $verified = @imagecreatefromwebp($absPath);
-                if (!$verified instanceof GdImage || imagesx($verified) !== $newW || imagesy($verified) !== $newH) {
-                    throw new MediaUploadException('فایل WebP تولیدشده معتبر نیست؛ ذخیره تصویر متوقف شد.');
+                $verifiedFrame = function_exists('imagecreatefromgif') ? @imagecreatefromgif($absPath) : false;
+                if (!$verifiedFrame instanceof GdImage) {
+                    throw new MediaUploadException('فایل GIF ذخیره‌شده قابل رمزگشایی نیست؛ آپلود متوقف شد.');
                 }
-                unset($verified);
+                unset($verifiedFrame);
                 @chmod($absPath, 0644);
-                $generatedPaths[$targetW] = $relPath;
-                $variantSizes[$targetW] = $outputSize;
-                if ($targetW === 800) {
-                    $finalWidth800 = $newW;
-                    $finalHeight800 = $newH;
-                    $finalSizeBytes = $outputSize;
+                // هر سه ستون به همان فایل GIF اشاره می‌کنند تا بنر عمومی سایت (file_path_1200)
+                // و پیش‌نمایش‌های پنل، همه نسخه متحرک را نشان دهند.
+                foreach ([480, 800, 1200] as $variantW) {
+                    $generatedPaths[$variantW] = $relPath;
+                    $variantSizes[$variantW] = 0;
+                }
+                $variantSizes[800] = $gifSize;
+                $finalWidth800 = $origWidth;
+                $finalHeight800 = $origHeight;
+                $finalSizeBytes = $gifSize;
+                $storedMime = 'image/gif';
+            } else {
+                foreach (self::TARGET_WIDTHS as $targetW) {
+                    $newW = min($origWidth, $targetW);
+                    $newH = max(1, (int) round($origHeight * ($newW / $origWidth)));
+                    $canvas = @imagecreatetruecolor($newW, $newH);
+                    if (!$canvas instanceof GdImage) {
+                        throw new MediaUploadException('پردازش اندازه تصویر ناموفق بود.');
+                    }
+                    if (!@imagealphablending($canvas, false) || !@imagesavealpha($canvas, true)) {
+                        throw new MediaUploadException('پردازش شفافیت تصویر ناموفق بود.');
+                    }
+                    $transparent = imagecolorallocatealpha($canvas, 0, 0, 0, 127);
+                    imagefilledrectangle($canvas, 0, 0, $newW, $newH, $transparent);
+                    if (!@imagecopyresampled($canvas, $srcImage, 0, 0, 0, 0, $newW, $newH, $origWidth, $origHeight)) {
+                        throw new MediaUploadException('پردازش اندازه تصویر ناموفق بود.');
+                    }
+
+                    $relPath = "/uploads/{$subDir}/img_{$token}_{$targetW}.webp";
+                    $absPath = $base . '/public_html' . $relPath;
+                    $file = @fopen($absPath, 'xb');
+                    if ($file === false) {
+                        throw new MediaUploadException('امکان ذخیره تصویر وجود ندارد. فضای دیسک و دسترسی پوشه را بررسی کنید.');
+                    }
+                    $ownedFiles[] = $absPath;
+                    $quality = $targetW === 480 ? 80 : 82;
+                    $written = false;
+                    $flushed = false;
+                    $closed = false;
+                    try {
+                        $written = @imagewebp($canvas, $file, $quality);
+                        $flushed = @fflush($file);
+                    } finally {
+                        $closed = @fclose($file);
+                        unset($canvas);
+                    }
+                    if (!$written || !$flushed || !$closed) {
+                        throw new MediaUploadException('ذخیره تصویر WebP کامل نشد. فضای دیسک و دسترسی پوشه را بررسی کنید.');
+                    }
+                    clearstatcache(true, $absPath);
+                    $outputSize = @filesize($absPath);
+                    $outputInfo = @getimagesize($absPath);
+                    if (
+                        !is_int($outputSize)
+                        || $outputSize <= 0
+                        || !is_array($outputInfo)
+                        || ($outputInfo['mime'] ?? '') !== 'image/webp'
+                        || (int) $outputInfo[0] !== $newW
+                        || (int) $outputInfo[1] !== $newH
+                    ) {
+                        throw new MediaUploadException('فایل WebP تولیدشده معتبر نیست؛ ذخیره تصویر متوقف شد.');
+                    }
+                    $verified = @imagecreatefromwebp($absPath);
+                    if (!$verified instanceof GdImage || imagesx($verified) !== $newW || imagesy($verified) !== $newH) {
+                        throw new MediaUploadException('فایل WebP تولیدشده معتبر نیست؛ ذخیره تصویر متوقف شد.');
+                    }
+                    unset($verified);
+                    @chmod($absPath, 0644);
+                    $generatedPaths[$targetW] = $relPath;
+                    $variantSizes[$targetW] = $outputSize;
+                    if ($targetW === 800) {
+                        $finalWidth800 = $newW;
+                        $finalHeight800 = $newH;
+                        $finalSizeBytes = $outputSize;
+                    }
                 }
             }
 
@@ -275,11 +340,12 @@ final class MediaService
             $transactionOwned = true;
             DB::query(
                 "INSERT INTO media (file_path_480, file_path_800, file_path_1200, mime_type, width, height, size_bytes, alt_text, created_at)
-                 VALUES (:p480, :p800, :p1200, 'image/webp', :w, :h, :sz, :alt, NOW())",
+                 VALUES (:p480, :p800, :p1200, :mime, :w, :h, :sz, :alt, NOW())",
                 [
                     'p480' => $generatedPaths[480],
                     'p800' => $generatedPaths[800],
                     'p1200' => $generatedPaths[1200],
+                    'mime' => $storedMime,
                     'w' => $finalWidth800,
                     'h' => $finalHeight800,
                     'sz' => $finalSizeBytes,
@@ -342,7 +408,8 @@ final class MediaService
             'url_480' => $generatedPaths[480],
             'url_800' => $generatedPaths[800],
             'url_1200' => $generatedPaths[1200],
-            'mime_type' => 'image/webp',
+            'mime_type' => $storedMime,
+            'is_animated_gif' => $isAnimatedGif,
             'width' => $finalWidth800,
             'height' => $finalHeight800,
             'size_bytes' => $finalSizeBytes,
@@ -353,6 +420,103 @@ final class MediaService
             'webp_total_bytes' => array_sum($variantSizes),
             'host_dir' => 'public_html/uploads/' . $subDir,
         ];
+    }
+
+    /**
+     * شمارش فریم‌های یک فایل GIF با پیمایش استاندارد بلوک‌های فرمت GIF87a/GIF89a.
+     * بیش از یک فریم یعنی GIF متحرک؛ خروجی ۰ یعنی فایل قابل خواندن نبود یا ساختار نامعتبر بود.
+     */
+    private static function animatedGifFrameCount(string $path): int
+    {
+        $fp = @fopen($path, 'rb');
+        if (!is_resource($fp)) {
+            return 0;
+        }
+        $header = (string) @fread($fp, 6);
+        if (!preg_match('/\AGIF8[79]a\z/', $header)) {
+            @fclose($fp);
+            return 0;
+        }
+        $screen = (string) @fread($fp, 7);
+        if (strlen($screen) < 7) {
+            @fclose($fp);
+            return 0;
+        }
+        $flags = ord($screen[4]);
+        if (($flags & 0x80) !== 0) {
+            $paletteBytes = 3 * (2 ** (($flags & 0x07) + 1));
+            if (@fseek($fp, $paletteBytes, SEEK_CUR) !== 0) {
+                @fclose($fp);
+                return 0;
+            }
+        }
+
+        $frames = 0;
+        while (!feof($fp) && $frames <= self::MAX_GIF_FRAMES_SCAN) {
+            $block = @fread($fp, 1);
+            if ($block === false || $block === '') {
+                break;
+            }
+            $byte = ord($block);
+            if ($byte === 0x3B) {
+                break; // Trailer: پایان فایل
+            }
+            if ($byte === 0x21) {
+                // Extension block: پرش از روی زیربلوک‌ها
+                $label = @fread($fp, 1);
+                if ($label === false || $label === '') {
+                    break;
+                }
+                if (!self::skipGifSubBlocks($fp)) {
+                    break;
+                }
+                continue;
+            }
+            if ($byte === 0x2C) {
+                $frames++;
+                $descriptor = (string) @fread($fp, 9);
+                if (strlen($descriptor) < 9) {
+                    break;
+                }
+                $dFlags = ord($descriptor[8]);
+                if (($dFlags & 0x80) !== 0) {
+                    $localPaletteBytes = 3 * (2 ** (($dFlags & 0x07) + 1));
+                    if (@fseek($fp, $localPaletteBytes, SEEK_CUR) !== 0) {
+                        break;
+                    }
+                }
+                if (@fread($fp, 1) === false) {
+                    break;
+                }
+                if (!self::skipGifSubBlocks($fp)) {
+                    break;
+                }
+                continue;
+            }
+            // بایت ناشناخته: ساختار فایل نامعتبر است
+            break;
+        }
+        @fclose($fp);
+        return $frames;
+    }
+
+    /** پرش از روی زنجیره زیربلوک‌های GIF تا بلوک خالی (طول صفر). */
+    private static function skipGifSubBlocks($fp): bool
+    {
+        while (!feof($fp)) {
+            $lenData = @fread($fp, 1);
+            if ($lenData === false || $lenData === '') {
+                return false;
+            }
+            $len = ord($lenData);
+            if ($len === 0) {
+                return true;
+            }
+            if (@fseek($fp, $len, SEEK_CUR) !== 0) {
+                return false;
+            }
+        }
+        return false;
     }
 
     /**

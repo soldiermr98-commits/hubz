@@ -283,7 +283,7 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
                 <span className="text-emerald-700">۱۰۰٪ خروجی‌ها WebP هستند (۰ فایل غیر WebP)</span>
               ) : (
                 <span className="text-amber-800">
-                  {summary.disk_non_webp_files.toLocaleString('fa-IR')} فایل قدیمی غیر WebP در دیسک
+                  {summary.disk_non_webp_files.toLocaleString('fa-IR')} فایل غیر WebP در دیسک (GIF متحرک یا قدیمی)
                 </span>
               )}
             </div>
@@ -345,7 +345,7 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
           </label>
           <label className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold cursor-pointer">
             <Upload className="w-4 h-4" />
-            <span>{uploading ? 'در حال تبدیل به WebP بهینه…' : 'آپلود تصویر جدید (تبدیل خودکار به WebP)'}</span>
+            <span>{uploading ? 'در حال بهینه‌سازی تصویر…' : 'آپلود تصویر جدید (GIF متحرک حفظ می‌شود · بقیه به WebP بهینه)'}</span>
             <input
               type="file"
               accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif"
