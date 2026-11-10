@@ -10,6 +10,7 @@ if (!defined('BASE_PATH')) define('BASE_PATH', dirname(__DIR__, 2));
 require_once BASE_PATH . '/app/Core/Bootstrap.php';
 
 use App\Controllers\AdvertisingController;
+use App\Controllers\AnalyticsController;
 use App\Controllers\AdminMailController;
 use App\Controllers\StaffController;
 use App\Controllers\AdvertisingFinanceController;
@@ -150,6 +151,7 @@ $router->get('/api/v1/ai/providers/manage', [AiProviderController::class, 'index
 $router->post('/api/v1/ai/providers/save', [AiProviderController::class, 'save']);
 $router->post('/api/v1/ai/providers/remove', [AiProviderController::class, 'remove']);
 $router->post('/api/v1/ai/providers/test', [AiProviderController::class, 'test']);
+$router->get('/api/v1/ai/providers/logs', [AiProviderController::class, 'logs']);
 
 // ۶. مسیرهای صف کارهای هوش مصنوعی بدون توهم و ورکر راه دور (مرحله S5)
 $router->get('/api/v1/ai/tasks', [AiWorkerController::class, 'index']);
@@ -157,6 +159,13 @@ $router->post('/api/v1/ai/tasks/enqueue', [AiWorkerController::class, 'disabled'
 $router->post('/api/v1/ai/tasks/run-batch', [AiWorkerController::class, 'disabled']);
 $router->get('/api/v1/ai/tasks/next', [AiWorkerController::class, 'disabled']);
 $router->post('/api/v1/ai/tasks/complete', [AiWorkerController::class, 'disabled']);
+
+// S9 — ماژول جامع آمار بازدید و کلیک (داشبورد، لاگ جزئیات، خروجی اکسل و پاک‌سازی خودکار)
+$router->get('/api/v1/analytics/dashboard', [AnalyticsController::class, 'dashboard']);
+$router->get('/api/v1/analytics/logs', [AnalyticsController::class, 'logs']);
+$router->get('/api/v1/analytics/export', [AnalyticsController::class, 'export']);
+$router->get('/api/v1/analytics/settings', [AnalyticsController::class, 'settings']);
+$router->post('/api/v1/analytics/settings', [AnalyticsController::class, 'saveSettings']);
 
 // ۷. مسیرهای مرحله S6 (ادعای مالکیت، گزارش خطا، آمار کلیک‌های روزانه و کرون ۵ دقیقه‌ای)
 $router->post('/api/v1/public/claim', [PublicSiteController::class, 'submitClaim']);

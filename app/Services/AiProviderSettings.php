@@ -28,7 +28,7 @@ final class AiProviderSettings
             try {
                 $config['providers'][$id] = $this->effectiveProvider($id, $this->readState($id));
             } catch (RuntimeException $e) {
-                $config['providers'][$id] = ['enabled'=>false, 'free_tier_confirmed'=>false, 'api_key'=>'', 'model'=>$definition['default_model']];
+                $config['providers'][$id] = ['enabled'=>false, 'free_tier_confirmed'=>false, 'api_key'=>'', 'model'=>$definition['default_model'], 'base_url'=>''];
             }
         }
         return $config;
@@ -48,7 +48,7 @@ final class AiProviderSettings
                 $effective = $this->effectiveProvider($id, $state);
             } catch (RuntimeException $e) {
                 $error = 'کلید ذخیره‌شده قابل خواندن نیست؛ پشتیبان کلید خصوصی سرور را بررسی کنید.';
-                $effective = ['enabled'=>false, 'free_tier_confirmed'=>false, 'api_key'=>'', 'model'=>$definition['default_model']];
+                $effective = ['enabled'=>false, 'free_tier_confirmed'=>false, 'api_key'=>'', 'model'=>$definition['default_model'], 'base_url'=>''];
             }
             $test = new AiArticleService(['providers'=>[$id=>$effective]]);
             $statuses = array_column($test->status(), null, 'id');
@@ -61,13 +61,14 @@ final class AiProviderSettings
                 'free_tier_confirmed'=>(bool)$effective['free_tier_confirmed'],
                 'key_configured'=>$configured, 'source'=>$source,
                 'version'=>(int)($state['version'] ?? 0), 'error'=>$error,
+                'base_url'=>(string)($effective['base_url'] ?? ''),
             ];
         }
         return $out;
     }
 
     /** Save one provider, preserving a blank key and rejecting stale administrator edits. */
-    public function save(string $id, string $model, string $newKey, bool $enabled, bool $confirmed, int $version, bool $remove = false): void
+    public function save(string $id, string $model, string $newKey, bool $enabled, bool $confirmed, int $version, bool $remove = false, string $baseUrl = ''): void
     {
         $catalog = AiArticleService::catalog();
         if (!isset($catalog[$id])) throw new InvalidArgumentException('سرویس انتخاب‌شده معتبر نیست.');
@@ -76,6 +77,9 @@ final class AiProviderSettings
         if (!AiArticleService::validModel($id, $model)) throw new InvalidArgumentException('نام مدل معتبر نیست؛ OpenRouter فقط مدل رایگان را می‌پذیرد.');
         $newKey = trim($newKey);
         if ($newKey !== '' && !self::validKey($newKey)) throw new InvalidArgumentException('فرمت کلید معتبر نیست؛ فاصله و خط جدید را حذف کنید.');
+        // S9: نشانی جایگزین (پراکسی/Cloudflare Worker) اختیاری است؛ فقط https کامل بدون پارامتر.
+        $baseUrl = trim($baseUrl);
+        if ($baseUrl !== '' && !AiArticleService::validBaseUrl($baseUrl)) throw new InvalidArgumentException('نشانی جایگزین معتبر نیست؛ آدرس https کامل و بدون پارامتر ورودی وارد کنید.');
         if ($version < 0) throw new InvalidArgumentException('نسخه تنظیمات معتبر نیست.');
         if (!$remove && $enabled && !$confirmed) throw new InvalidArgumentException('پیش از فعال‌سازی، سهمیه و احتمال هزینه حساب را بررسی و تأیید کنید.');
 
@@ -111,6 +115,7 @@ final class AiProviderSettings
                 'enabled'=>$remove ? false : $enabled,
                 'free_tier_confirmed'=>$remove ? false : $confirmed,
                 'secret'=>$secret,
+                'base_url'=>$baseUrl !== '' ? $baseUrl : null,
             ];
             $json = json_encode($next, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
             DB::query('UPDATE settings SET v=:v,updated_at=NOW() WHERE k=:k', ['v'=>$json, 'k'=>$key]);
@@ -144,9 +149,11 @@ final class AiProviderSettings
         $catalog = AiArticleService::catalog();
         if ($state === null) return $this->legacy($id);
         $secret = $state['secret'] === null ? '' : $this->vault->decrypt($id, $state['secret']);
+        $baseUrl = is_string($state['base_url'] ?? null) ? trim((string)$state['base_url']) : '';
         return [
             'enabled'=>$state['enabled'], 'free_tier_confirmed'=>$state['free_tier_confirmed'],
             'api_key'=>$secret, 'model'=>$state['model'] ?: $catalog[$id]['default_model'],
+            'base_url'=>$baseUrl !== '' && AiArticleService::validBaseUrl($baseUrl) ? $baseUrl : '',
         ];
     }
 
@@ -160,6 +167,7 @@ final class AiProviderSettings
             'free_tier_confirmed'=>($old['free_tier_confirmed'] ?? false) === true,
             'api_key'=>is_string($old['api_key'] ?? null) ? trim($old['api_key']) : '',
             'model'=>is_string($old['model'] ?? null) && trim($old['model']) !== '' ? trim($old['model']) : $definition['default_model'],
+            'base_url'=>is_string($old['base_url'] ?? null) ? trim((string)$old['base_url']) : '',
         ];
     }
 

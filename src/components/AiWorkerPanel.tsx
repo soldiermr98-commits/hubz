@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AiManagedProvider, AiProviderStatus, fetchAiProviderManagement, fetchAiProviders, removeAiProvider, saveAiProvider, testAiProvider, updateFeatureSchema } from '../services/adminApi';
+import { AiManagedProvider, AiProviderStatus, AiServiceLogRow, fetchAiProviderLogs, fetchAiProviderManagement, fetchAiProviders, removeAiProvider, saveAiProvider, testAiProvider, updateFeatureSchema } from '../services/adminApi';
 
 const input = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
 const secondary = 'rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-800 disabled:opacity-50';
@@ -10,12 +10,18 @@ type Result = {error:boolean;text:string} | null;
 function ProviderCard({provider,csrfToken,schemaReady,onReload}:{provider:AiManagedProvider;csrfToken:string;schemaReady:boolean;onReload:()=>Promise<void>}) {
   const [model,setModel]=useState(provider.model);
   const [key,setKey]=useState('');
+  const [baseUrl,setBaseUrl]=useState(provider.base_url ?? '');
   const [enabled,setEnabled]=useState(provider.enabled);
   const [confirmed,setConfirmed]=useState(provider.free_tier_confirmed);
   const [busy,setBusy]=useState(false);
   const [result,setResult]=useState<Result>(null);
-  useEffect(()=>{setModel(provider.model);setEnabled(provider.enabled);setConfirmed(provider.free_tier_confirmed);setKey('');},
-    [provider.id,provider.version,provider.model,provider.enabled,provider.free_tier_confirmed]);
+  const [logs,setLogs]=useState<AiServiceLogRow[]|null>(null);
+  const loadLogs=useCallback(async()=>{
+    try { const d=await fetchAiProviderLogs(provider.id); setLogs(d.logs||[]); } catch { setLogs(null); }
+  },[provider.id]);
+  useEffect(()=>{setModel(provider.model);setEnabled(provider.enabled);setConfirmed(provider.free_tier_confirmed);setKey('');setBaseUrl(provider.base_url ?? '');},
+    [provider.id,provider.version,provider.model,provider.enabled,provider.free_tier_confirmed,provider.base_url]);
+  useEffect(()=>{ void loadLogs(); },[loadLogs]);
 
   const save=async(test:boolean)=>{
     if(busy)return;
@@ -24,10 +30,10 @@ function ProviderCard({provider,csrfToken,schemaReady,onReload}:{provider:AiMana
     if(test && !window.confirm('تست، یک درخواست کوتاه واقعی به همین سرویس می‌فرستد و ممکن است سهمیه یا هزینه داشته باشد. ادامه می‌دهید؟'))return;
     setBusy(true);setResult(null);
     try {
-      const saved=await saveAiProvider({provider:provider.id,model,api_key:key,enabled,free_tier_confirmed:confirmed,version:provider.version},csrfToken);
+      const saved=await saveAiProvider({provider:provider.id,model,api_key:key,enabled,free_tier_confirmed:confirmed,version:provider.version,base_url:baseUrl.trim()},csrfToken);
       if(!saved.ok){setResult({error:true,text:saved.error||'ذخیره انجام نشد.'});return;}
       setKey('');
-      await onReload();
+      await onReload(); void loadLogs();
       if(!test){setResult({error:false,text:saved.message||'تنظیمات ذخیره شد.'});return;}
       const checked=await testAiProvider(provider.id,csrfToken);
       setResult({error:!checked.ok,text:checked.ok?(checked.message||'اتصال موفق بود.'):`تنظیمات ذخیره شد؛ تست ناموفق: ${checked.error||'ارتباط برقرار نشد.'}`});
@@ -53,6 +59,11 @@ function ProviderCard({provider,csrfToken,schemaReady,onReload}:{provider:AiMana
         placeholder={provider.key_configured?'خالی = حفظ کلید فعلی':'کلید API'} onChange={e=>{setKey(e.target.value);if(e.target.value && !provider.key_configured)setEnabled(true);}} /></label>
       <label className="text-sm">شناسه مدل (قابل ویرایش) <input aria-label={`مدل ${provider.label}`} dir="ltr" maxLength={120} autoComplete="off" spellCheck={false} className={`${input} mt-1`} value={model} onChange={e=>setModel(e.target.value)}/></label>
     </div>
+    <label className="block text-sm">نشانی جایگزین سرویس (اختیاری — پراکسی/Cloudflare Worker برای عبور از تحریم IP)
+      <input aria-label={`نشانی جایگزین ${provider.label}`} dir="ltr" maxLength={300} autoComplete="off" spellCheck={false} className={`${input} mt-1`}
+        placeholder="https://your-worker.example/openai/v1/chat/completions" value={baseUrl} onChange={e=>setBaseUrl(e.target.value)}/>
+    </label>
+    <p className="text-xs text-slate-500">برای سرویس‌های Chat نشانی کامل endpoint جایگزین می‌شود؛ برای Gemini نشانی پایه است و <code dir="ltr">/models/…/generateContent</code> به آن اضافه می‌شود. خالی بگذارید = نشانی رسمی سرویس. فقط https و بدون پارامتر پذیرفته می‌شود.</p>
     {(provider.suggested_models?.length ?? 0)>0&&<label className="block text-sm">مدل‌های پیشنهادی
       <select aria-label={`مدل پیشنهادی ${provider.label}`} className={`${input} mt-1`} dir="ltr"
         value={provider.suggested_models?.some(item=>item.id===model)?model:''} onChange={e=>{if(e.target.value)setModel(e.target.value);}}>
@@ -64,6 +75,18 @@ function ProviderCard({provider,csrfToken,schemaReady,onReload}:{provider:AiMana
     {provider.id==='openrouter'&&<p className="text-xs text-slate-600">در OpenRouter فقط <code dir="ltr">openrouter/free</code> یا مدل‌های دارای پسوند <code dir="ltr">:free</code> پذیرفته می‌شوند.</p>}
     <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/><span>این سرویس برای نویسنده فعال باشد</span></label>
     <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/><span>طرح، سهمیه و احتمال هزینه این حساب را بررسی کرده‌ام.</span></label>
+    {logs&&logs.length>0&&<div className="rounded-lg border border-slate-200 bg-white p-3">
+      <p className="mb-2 text-xs font-bold text-slate-700">آخرین تلاش‌های اتصال — کد وضعیت دقیق هر تلاش (بدون افشای کلید)</p>
+      <ul className="space-y-1 text-xs">
+        {logs.slice(0,6).map((l,i)=>(
+          <li key={i} className="flex flex-wrap items-center gap-2">
+            <span className={`rounded px-1.5 py-0.5 font-bold ${l.ok?'bg-emerald-50 text-emerald-700':'bg-rose-50 text-rose-700'}`} dir="ltr">{l.ok?'OK':(l.status_code??'NETWORK')}</span>
+            <span className="tabular-nums text-slate-400" dir="ltr">{l.created_at}</span>
+            <span className="text-slate-600">{l.message}</span>
+          </li>
+        ))}
+      </ul>
+    </div>}
     <div className="flex flex-wrap gap-2">
       <button type="button" className={primary} disabled={busy} onClick={()=>void save(false)}>ذخیره تنظیمات</button>
       <button type="button" className={secondary} disabled={busy} onClick={()=>void save(true)}>ذخیره و تست اتصال</button>

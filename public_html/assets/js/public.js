@@ -1,8 +1,9 @@
 /**
- * HamiHubX.ir - اسکریپت پایه فوق‌سبک سایت عمومی (< 3.5KB)
+ * HamiHubX.ir - اسکریپت پایه فوق‌سبک سایت عمومی (< 5KB)
  * ۱. بارگذاری تنبل (Lazy-Load) نقشه Leaflet سلف‌هاست فقط در صورت کلیک کاربر روی دکمه نمایش نقشه
- * ۲. ثبت کلیک‌های تماس، نقشه، اینستاگرام، واتساپ و وب‌سایت با navigator.sendBeacon در جدول events_daily
- * ۳. ارسال بدون رفرش فرم‌های ادعای مالکیت (Claim) و گزارش خطا (Report) در مرحله S6 به صندوق بازبینی
+ * ۲. ثبت کلیک‌های تماس، نقشه، اینستاگرام، واتساپ و وب‌سایت با navigator.sendBeacon در events_daily
+ * ۳. ارسال بدون رفرش فرم‌های ادعای مالکیت (Claim) و گزارش خطا (Report) در مرحله S6
+ * ۴. S9: ارسال زمینهٔ آمار جامع (مسیر، رفرر، UTM، جستجوی داخلی) به همان endpoint سبک
  */
 (function () {
   'use strict';
@@ -65,13 +66,35 @@
     });
   }
 
+  // S9: زمینهٔ غنی رهگیری — مسیر، رفرر، UTM و جستجوی داخلی؛ بدون ذخیرهٔ کوکی یا رهگیری بین‌روزی.
+  function trackingContext() {
+    var ctx = { path: location.pathname };
+    try {
+      var params = new URLSearchParams(location.search);
+      ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term'].forEach(function (k) {
+        var v = params.get(k);
+        if (v) ctx.utm = ctx.utm || {}, ctx.utm[k] = String(v).slice(0, 100);
+      });
+      var q = params.get('q');
+      if (q) ctx.search_query = String(q).slice(0, 100);
+      if (document.referrer) ctx.referrer = String(document.referrer).slice(0, 300);
+    } catch (e) {}
+    return ctx;
+  }
+
   function trackPageView() {
     var page = document.querySelector('[data-hx-page-view]');
     if (!page || !navigator.sendBeacon) return;
-    navigator.sendBeacon('/api/v1/events/track', JSON.stringify({
-      event_type: 'view', business_id: Number(page.getAttribute('data-business-id') || 0),
-      article_id: Number(page.getAttribute('data-article-id') || 0)
-    }));
+    var payload = {
+      event_type: 'view',
+      business_id: Number(page.getAttribute('data-business-id') || 0),
+      article_id: Number(page.getAttribute('data-article-id') || 0),
+      city_id: Number(page.getAttribute('data-city-id') || 0),
+      category_id: Number(page.getAttribute('data-category-id') || 0)
+    };
+    var ctx = trackingContext();
+    for (var k in ctx) payload[k] = ctx[k];
+    navigator.sendBeacon('/api/v1/events/track', JSON.stringify(payload));
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', trackPageView);
   else trackPageView();
@@ -171,13 +194,15 @@
         trackEl.getAttribute('data-hx-track') ||
         trackEl.getAttribute('data-track-type') ||
         'view';
-      var payload = JSON.stringify({
+      var payload = {
         event_type: evType,
         business_id: Number(trackEl.getAttribute('data-business-id') || 0),
         article_id: Number(trackEl.getAttribute('data-article-id') || 0)
-      });
+      };
+      var ctx = trackingContext();
+      for (var k in ctx) payload[k] = ctx[k];
       try {
-        navigator.sendBeacon('/api/v1/events/track', payload);
+        navigator.sendBeacon('/api/v1/events/track', JSON.stringify(payload));
       } catch (e) {}
     }
   });

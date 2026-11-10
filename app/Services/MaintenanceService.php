@@ -6,6 +6,7 @@ namespace App\Services;
 use App\Core\Cache;
 use App\Core\DB;
 use App\Core\WorkerLock;
+use Throwable;
 
 final class MaintenanceService
 {
@@ -51,8 +52,18 @@ final class MaintenanceService
         }
         $ai = DB::query("UPDATE ai_tasks SET status = 'queued', updated_at = NOW() WHERE status = 'claimed' AND updated_at < DATE_SUB(NOW(), INTERVAL 15 MINUTE)")->rowCount();
         $logins = DB::query("DELETE FROM login_attempts WHERE attempted_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)")->rowCount();
+        // S9: پاک‌سازی خودکار لاگ جزئیات آمار و لاگ سرویس‌های هوش مصنوعی (حداکثر هر ساعت یک‌بار).
+        $analyticsPrune = ['status' => 'skipped'];
+        if (AnalyticsService::pruneDue()) {
+            try {
+                $analyticsPrune = AnalyticsService::prune();
+            } catch (Throwable $e) {
+                error_log('Analytics prune failed: ' . get_class($e));
+                $analyticsPrune = ['status' => 'error'];
+            }
+        }
         return ['status'=>$flushed < 0 ? 'cache_error' : 'ok', 'checked_at' => $now, 'sponsor_transitions' => count($transitions), 'flushed_files' => $flushed,
             'released_jobs' => $released, 'collector_recovery_skipped'=>$recoverySkipped,
-            'released_ai_tasks' => $ai, 'cleaned_logins' => $logins];
+            'released_ai_tasks' => $ai, 'cleaned_logins' => $logins, 'analytics_prune' => $analyticsPrune];
     }
 }

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { LayoutDashboard, Inbox, MapPin, Store, FileText, FileJson, Image as ImageIcon, Megaphone, Settings, LogOut, LoaderCircle } from 'lucide-react';
+import { LayoutDashboard, Inbox, MapPin, Store, FileText, FileJson, Image as ImageIcon, Megaphone, BarChart3, Settings, LogOut, LoaderCircle } from 'lucide-react';
 import { AdminUser, CategoryItem, CategoryPackItem, CityItem, NeighborhoodItem,
   fetchAuthMe, loginAdmin, logoutAdmin, fetchCategoriesAndPacks, fetchCitiesAndNeighborhoods, runWebMigrations, updateSeoSchema,
   FINANCE_PENDING_STORAGE_KEY, GATEWAY_PENDING_STORAGE_KEY } from './services/adminApi';
@@ -14,19 +14,21 @@ import { StaffManager } from './components/StaffManager';
 import { CronHelpPanel } from './components/CronHelpPanel';
 import { AdvertisingView } from './components/AdvertisingView';
 import { S6AnalyticsPanel } from './components/S6AnalyticsPanel';
+import { StatsView } from './components/StatsView';
+import { AnalyticsSettingsPanel } from './components/AnalyticsSettingsPanel';
 import { JsonImportView } from './components/JsonImportView';
 
-type Route = 'dashboard'|'review'|'cities'|'businesses'|'import'|'articles'|'media'|'advertising'|'settings';
+type Route = 'dashboard'|'review'|'cities'|'businesses'|'import'|'articles'|'media'|'advertising'|'stats'|'settings';
 const nav: Array<{id:Route;label:string;icon:React.ElementType}> = [
   {id:'dashboard',label:'داشبورد',icon:LayoutDashboard},{id:'review',label:'بازبینی',icon:Inbox},
   {id:'cities',label:'جمع‌آوری و شهرها',icon:MapPin},{id:'businesses',label:'کسب‌وکارها',icon:Store},
   {id:'import',label:'جمع‌آوری و ورود',icon:FileJson},{id:'articles',label:'مقالات',icon:FileText},
   {id:'media',label:'رسانه',icon:ImageIcon},
-  {id:'advertising',label:'تبلیغات و درخواست‌ها',icon:Megaphone},{id:'settings',label:'تنظیمات',icon:Settings},
+  {id:'advertising',label:'تبلیغات و درخواست‌ها',icon:Megaphone},{id:'stats',label:'آمار',icon:BarChart3},{id:'settings',label:'تنظیمات',icon:Settings},
 ];
 function canOpen(user:AdminUser, route:Route):boolean {
   if (user.permissions) return ['articles','businesses','media','review'].includes(route) && user.permissions.includes(route as 'articles'|'businesses'|'media'|'review');
-  return !['import','advertising'].includes(route) || user.role==='admin';
+  return !['import','advertising','stats'].includes(route) || user.role==='admin';
 }
 function routeFromPath():Route {
   const part = window.location.pathname.split('/').filter(Boolean)[1] as Route | undefined;
@@ -91,7 +93,8 @@ export default function App() {
       {route==='articles'&&<ArticlesManagerView cities={cities} categories={categories} csrfToken={csrf} isAdmin={user.role==='admin'} onGoReview={()=>go('review')} onDirtyChange={setArticleDirty}/>}
       {route==='media'&&<MediaManagerView csrfToken={csrf} isAdmin={user.role==='admin'}/>}
       {route==='advertising'&&user.role==='admin'&&<AdvertisingView csrfToken={csrf} cities={cities} categories={categories}/>}
-      {route==='settings'&&<div className="space-y-4"><section className="bg-white border rounded-xl p-6"><h1 className="font-bold">نگهداری پایگاه داده</h1><div className="flex flex-wrap gap-2 mt-3">{user.role==='admin'&&<button className="bg-blue-700 text-white rounded p-2 text-sm" onClick={async()=>{const r=await runWebMigrations(csrf);setNotice(r.message||r.error);if(r.ok) await refresh();}}>اجرای مایگریشن‌ها</button>}{user.role==='admin'&&<button className="border border-slate-300 bg-white hover:bg-slate-50 rounded p-2 text-sm font-semibold" onClick={async()=>{const r=await updateSeoSchema(csrf);setNotice(r.message||r.error);}}>آماده‌سازی جدول قوانین سئو (۴۱۰/۳۰۱)</button>}</div>{user.role!=='admin'&&<p className="text-xs text-slate-500 mt-3">اجرای مایگریشن‌ها و آماده‌سازی جداول فقط توسط مدیر ارشد انجام می‌شود.</p>}</section>{user.role==='admin'&&<><CronHelpPanel/><StaffManager csrfToken={csrf}/><AdminMailPanel csrfToken={csrf}/></>}<AiWorkerPanel csrfToken={csrf} isAdmin={user.role==='admin'}/></div>}
+      {route==='stats'&&user.role==='admin'&&<StatsView csrfToken={csrf}/>}
+      {route==='settings'&&<div className="space-y-4"><section className="bg-white border rounded-xl p-6"><h1 className="font-bold">نگهداری پایگاه داده</h1><div className="flex flex-wrap gap-2 mt-3">{user.role==='admin'&&<button className="bg-blue-700 text-white rounded p-2 text-sm" onClick={async()=>{const r=await runWebMigrations(csrf);setNotice(r.message||r.error);if(r.ok) await refresh();}}>اجرای مایگریشن‌ها</button>}{user.role==='admin'&&<button className="border border-slate-300 bg-white hover:bg-slate-50 rounded p-2 text-sm font-semibold" onClick={async()=>{const r=await updateSeoSchema(csrf);setNotice(r.message||r.error);}}>آماده‌سازی جدول قوانین سئو (۴۱۰/۳۰۱)</button>}</div>{user.role!=='admin'&&<p className="text-xs text-slate-500 mt-3">اجرای مایگریشن‌ها و آماده‌سازی جداول فقط توسط مدیر ارشد انجام می‌شود.</p>}</section>{user.role==='admin'&&<><CronHelpPanel/><StaffManager csrfToken={csrf}/><AdminMailPanel csrfToken={csrf}/><AnalyticsSettingsPanel csrfToken={csrf}/></>}<AiWorkerPanel csrfToken={csrf} isAdmin={user.role==='admin'}/></div>}
       </>}
     </main></div>}</div>;
 }

@@ -59,6 +59,10 @@ final class MediaLibraryService
     /**
      * فهرست کامل کتابخانه رسانه با اطلاعات مسیر دقیق روی هاست، حجم دیسک و محل‌های استفاده در دیتابیس
      *
+     * نسخهٔ S9: شمارش مصرف‌ها با یک کوئری گروهی GROUP BY انجام می‌شود و جزئیات استفادهٔ هر تصویر
+     * فقط برای همان صفحهٔ فعلی از دیتابیس خوانده می‌شود؛ دیگر کل جدول businesses، business_photos،
+     * article_revisions (با payload_json حجیم) و advertising_banners در حافظه بارگذاری نمی‌شود.
+     *
      * @param array<string, mixed> $filters
      * @return array<string, mixed>
      */
@@ -79,12 +83,14 @@ final class MediaLibraryService
              ORDER BY id DESC'
         );
 
-        $allIds = array_map(static fn(array $r): int => (int) ($r['id'] ?? 0), $rows);
-        $usageMap = self::collectUsageMap($allIds);
+        // S9: شمارش مصرف با GROUP BY (یک ردیف به‌ازای هر رسانهٔ استفاده‌شده) — سبک در حافظه.
+        $usageCounts = self::usageCountsByMediaId();
+        // S9: برای جستجوی متنی روی «عناوین محل استفاده»، تطبیق در SQL انجام می‌شود نه با بارگذاری همهٔ جدول‌ها.
+        $titleMatchedIds = $search !== '' ? self::usageTitleMatchIds($search) : [];
 
-        $enriched = [];
-        $unusedCount = 0;
+        $matchedIds = [];
         $usedCount = 0;
+        $unusedCount = 0;
         $missingFilesCount = 0;
         $nonWebpDbCount = 0;
         $knownRelativePaths = [];
@@ -94,20 +100,17 @@ final class MediaLibraryService
             if ($id <= 0) {
                 continue;
             }
-            $usages = $usageMap[$id] ?? [];
-            $variants = self::inspectMediaVariants($row);
 
+            $variants = self::inspectMediaVariants($row);
             foreach ($variants as $v) {
                 if ($v['web_path'] !== '') {
                     $knownRelativePaths[$v['web_path']] = true;
                 }
             }
 
-            $totalBytes = 0;
             $allPresent = true;
             $allWebp = strtolower((string) ($row['mime_type'] ?? '')) === 'image/webp';
             foreach ($variants as $v) {
-                $totalBytes += $v['bytes'];
                 if (!$v['exists']) {
                     $allPresent = false;
                 }
@@ -116,7 +119,9 @@ final class MediaLibraryService
                 }
             }
 
-            $isUsed = count($usages) > 0;
+            $usageInfo = $usageCounts[$id] ?? null;
+            $usageCount = $usageInfo === null ? 0 : (int) $usageInfo['usage_count'];
+            $isUsed = $usageCount > 0;
             if ($isUsed) {
                 $usedCount++;
             } else {
@@ -129,37 +134,7 @@ final class MediaLibraryService
                 $nonWebpDbCount++;
             }
 
-            $hasBannerLock = false;
-            foreach ($usages as $u) {
-                if (($u['type'] ?? '') === 'advertising_banner') {
-                    $hasBannerLock = true;
-                    break;
-                }
-            }
-
-            $item = [
-                'id' => $id,
-                'file_path_1200' => (string) ($row['file_path_1200'] ?? ''),
-                'file_path_800' => (string) ($row['file_path_800'] ?? ''),
-                'file_path_480' => (string) ($row['file_path_480'] ?? ''),
-                'url_1200' => (string) ($row['file_path_1200'] ?? ''),
-                'url_800' => (string) ($row['file_path_800'] ?? ''),
-                'url_480' => (string) ($row['file_path_480'] ?? ''),
-                'host_path_1200' => $variants['1200']['host_path'],
-                'mime_type' => (string) ($row['mime_type'] ?? 'image/webp'),
-                'width' => (int) ($row['width'] ?? 0),
-                'height' => (int) ($row['height'] ?? 0),
-                'alt_text' => (string) ($row['alt_text'] ?? ''),
-                'uploaded_by_name' => '',
-                'created_at' => (string) ($row['created_at'] ?? ''),
-                'variants' => $variants,
-                'total_bytes' => $totalBytes,
-                'all_files_present' => $allPresent,
-                'all_webp' => $allWebp,
-                'usages' => $usages,
-                'usage_count' => count($usages),
-                'can_force_detach' => !$hasBannerLock,
-            ];
+            $hasBannerLock = $usageInfo !== null && (int) $usageInfo['banner_count'] > 0;
 
             if ($usageFilter === 'used' && !$isUsed) {
                 continue;
@@ -177,25 +152,85 @@ final class MediaLibraryService
             if ($search !== '') {
                 $haystack = implode(' ', [
                     (string) $id,
-                    $item['alt_text'],
-                    $item['file_path_1200'],
-                    $item['host_path_1200'],
-                    implode(' ', array_map(static fn(array $u): string => (string) ($u['title'] ?? ''), $usages)),
+                    (string) ($row['alt_text'] ?? ''),
+                    (string) ($row['file_path_1200'] ?? ''),
                 ]);
                 $matched = function_exists('mb_stripos')
                     ? mb_stripos($haystack, $search, 0, 'UTF-8') !== false
                     : stripos($haystack, $search) !== false;
-                if (!$matched) {
+                if (!$matched && !isset($titleMatchedIds[$id])) {
                     continue;
                 }
             }
 
-            $enriched[] = $item;
+            $matchedIds[] = $id;
         }
 
-        $totalFiltered = count($enriched);
+        $totalFiltered = count($matchedIds);
         $offset = ($page - 1) * $perPage;
-        $pagedItems = array_slice($enriched, $offset, $perPage);
+        $sliceIds = array_slice($matchedIds, $offset, $perPage);
+
+        // جزئیات محل‌های استفاده فقط برای همین صفحه (حداکثر ۱۰۰ مورد) خوانده می‌شود.
+        $usageDetails = self::collectUsageMap($sliceIds);
+        $pagedItems = [];
+        if ($sliceIds !== []) {
+            $sliceRows = self::rowsByIds($sliceIds);
+            foreach ($sliceRows as $row) {
+                $id = (int) ($row['id'] ?? 0);
+                if ($id <= 0) {
+                    continue;
+                }
+                $usages = $usageDetails[$id] ?? [];
+                $variants = self::inspectMediaVariants($row);
+
+                $totalBytes = 0;
+                $allPresent = true;
+                $allWebp = strtolower((string) ($row['mime_type'] ?? '')) === 'image/webp';
+                foreach ($variants as $v) {
+                    $totalBytes += $v['bytes'];
+                    if (!$v['exists']) {
+                        $allPresent = false;
+                    }
+                    if (!$v['is_webp']) {
+                        $allWebp = false;
+                    }
+                }
+
+                $usageInfo = $usageCounts[$id] ?? null;
+                $usageCount = $usageInfo === null ? 0 : (int) $usageInfo['usage_count'];
+                $hasBannerLock = false;
+                foreach ($usages as $u) {
+                    if (($u['type'] ?? '') === 'advertising_banner') {
+                        $hasBannerLock = true;
+                        break;
+                    }
+                }
+
+                $pagedItems[] = [
+                    'id' => $id,
+                    'file_path_1200' => (string) ($row['file_path_1200'] ?? ''),
+                    'file_path_800' => (string) ($row['file_path_800'] ?? ''),
+                    'file_path_480' => (string) ($row['file_path_480'] ?? ''),
+                    'url_1200' => (string) ($row['file_path_1200'] ?? ''),
+                    'url_800' => (string) ($row['file_path_800'] ?? ''),
+                    'url_480' => (string) ($row['file_path_480'] ?? ''),
+                    'host_path_1200' => $variants['1200']['host_path'],
+                    'mime_type' => (string) ($row['mime_type'] ?? 'image/webp'),
+                    'width' => (int) ($row['width'] ?? 0),
+                    'height' => (int) ($row['height'] ?? 0),
+                    'alt_text' => (string) ($row['alt_text'] ?? ''),
+                    'uploaded_by_name' => '',
+                    'created_at' => (string) ($row['created_at'] ?? ''),
+                    'variants' => $variants,
+                    'total_bytes' => $totalBytes,
+                    'all_files_present' => $allPresent,
+                    'all_webp' => $allWebp,
+                    'usages' => $usages,
+                    'usage_count' => $usageCount,
+                    'can_force_detach' => !$hasBannerLock,
+                ];
+            }
+        }
 
         $diskStats = self::scanUploadsDirectory($knownRelativePaths);
 
@@ -221,6 +256,142 @@ final class MediaLibraryService
             ],
             'dimension_guides' => self::dimensionGuides(),
         ];
+    }
+
+    /**
+     * S9: ردیف‌های رسانهٔ یک صفحهٔ مشخص با کوئری IN — جایگزین نگه‌داشتن همهٔ ردیف‌ها در حافظه.
+     *
+     * @param array<int, int> $ids
+     * @return array<int, array<string, mixed>>
+     */
+    private static function rowsByIds(array $ids): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn(int $id): bool => $id > 0)));
+        if ($ids === []) {
+            return [];
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $rows = DB::fetchAll(
+            "SELECT id, file_path_480, file_path_800, file_path_1200, mime_type, width, height, size_bytes, alt_text, created_at
+             FROM media WHERE id IN ({$placeholders}) ORDER BY id DESC",
+            $ids
+        );
+        $byId = [];
+        foreach ($rows as $row) {
+            $byId[(int) $row['id']] = $row;
+        }
+        $ordered = [];
+        foreach (array_reverse($ids) as $id) {
+            if (isset($byId[$id])) {
+                $ordered[] = $byId[$id];
+            }
+        }
+        return $ordered;
+    }
+
+    /**
+     * S9: شمارش مصرف هر رسانه با یک کوئری UNION ALL + GROUP BY روی SQL.
+     * هیچ ردیف کامل جدولی در PHP بارگذاری نمی‌شود؛ خروجی فقط شناسه → تعداد مصرف و تعداد بنر است.
+     *
+     * @return array<int, array{usage_count:int, banner_count:int}>
+     */
+    private static function usageCountsByMediaId(): array
+    {
+        $union = [
+            "SELECT cover_media_id AS media_id, 0 AS is_banner FROM businesses WHERE cover_media_id IS NOT NULL",
+            "SELECT bp.media_id AS media_id, 0 AS is_banner FROM business_photos bp",
+            "SELECT ae.cover_media_id AS media_id, 0 AS is_banner FROM article_extras ae WHERE ae.cover_media_id IS NOT NULL",
+            "SELECT ab.media_id AS media_id, 1 AS is_banner FROM advertising_banners ab WHERE ab.media_id IS NOT NULL",
+        ];
+        // پیش‌نویس/بازبینی مقاله: cover_media_id داخل payload_json است؛ با توابع JSON و شرط اعتبار JSON.
+        $union[] = "SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(ar.payload_json, '$.cover_media_id')) AS UNSIGNED) AS media_id, 0 AS is_banner
+                    FROM article_revisions ar
+                    INNER JOIN articles a ON a.id = ar.article_id
+                    WHERE ar.status IN ('draft','review')
+                      AND ar.payload_json LIKE '%cover_media_id%'
+                      AND JSON_VALID(ar.payload_json)
+                      AND CAST(JSON_UNQUOTE(JSON_EXTRACT(ar.payload_json, '$.cover_media_id')) AS UNSIGNED) > 0
+                      AND NOT EXISTS (
+                          SELECT 1 FROM article_extras ae2
+                          WHERE ae2.article_id = ar.article_id
+                            AND ae2.cover_media_id = CAST(JSON_UNQUOTE(JSON_EXTRACT(ar.payload_json, '$.cover_media_id')) AS UNSIGNED)
+                      )";
+        $sql = "SELECT u.media_id, COUNT(*) AS usage_count, SUM(u.is_banner) AS banner_count
+                FROM (" . implode(" UNION ALL ", $union) . ") u
+                WHERE u.media_id IS NOT NULL AND u.media_id > 0
+                GROUP BY u.media_id";
+        $map = [];
+        try {
+            foreach (DB::fetchAll($sql) as $row) {
+                $mid = (int) ($row['media_id'] ?? 0);
+                if ($mid > 0) {
+                    $map[$mid] = ['usage_count' => (int) $row['usage_count'], 'banner_count' => (int) $row['banner_count']];
+                }
+            }
+        } catch (Throwable) {
+            // اگر نسخهٔ دیتابیس توابع JSON را پشتیبانی نکرد، فقط بخش پیش‌نویس‌ها محاسبه نمی‌شود؛ بقیه آمار درست می‌ماند.
+        }
+        return $map;
+    }
+
+    /**
+     * S9: شناسه‌های رسانه‌ای که «عنوان» محل استفاده‌شان با جستجوی مدیر مطابقت دارد — محاسبه در SQL.
+     *
+     * @return array<int, bool>
+     */
+    private static function usageTitleMatchIds(string $search): array
+    {
+        $like = '%' . $search . '%';
+        $params = [];
+        for ($i = 0; $i < 8; $i++) {
+            $params[] = $like;
+        }
+        $sql = "SELECT cover_media_id AS mid FROM businesses
+                 WHERE cover_media_id IS NOT NULL AND (name LIKE ? OR CAST(id AS CHAR) LIKE ?)
+                UNION
+                SELECT bp.media_id AS mid FROM business_photos bp
+                  INNER JOIN businesses b ON b.id = bp.business_id
+                 WHERE b.name LIKE ? OR CAST(b.id AS CHAR) LIKE ?
+                UNION
+                SELECT ae.cover_media_id AS mid FROM article_extras ae
+                  INNER JOIN articles a ON a.id = ae.article_id
+                 WHERE ae.cover_media_id IS NOT NULL AND (a.title LIKE ? OR CAST(a.id AS CHAR) LIKE ?)
+                UNION
+                SELECT ab.media_id AS mid FROM advertising_banners ab
+                 WHERE ab.media_id IS NOT NULL AND (ab.title LIKE ? OR CAST(ab.id AS CHAR) LIKE ?)";
+        $ids = [];
+        try {
+            foreach (DB::fetchAll($sql, $params) as $row) {
+                $mid = (int) ($row['mid'] ?? 0);
+                if ($mid > 0) {
+                    $ids[$mid] = true;
+                }
+            }
+        } catch (Throwable) {
+        }
+        // جستجو در عنوان پیش‌نویس/بازبینی مقاله (payload_json) فقط اگر جدول موجود است.
+        if (self::tableExists('article_revisions') && self::tableExists('articles')) {
+            try {
+                $rows = DB::fetchAll(
+                    "SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(ar.payload_json, '$.cover_media_id')) AS UNSIGNED) AS mid
+                     FROM article_revisions ar
+                     INNER JOIN articles a ON a.id = ar.article_id
+                     WHERE ar.status IN ('draft','review')
+                       AND ar.payload_json LIKE '%cover_media_id%'
+                       AND JSON_VALID(ar.payload_json)
+                       AND (a.title LIKE :q1 OR CAST(ar.article_id AS CHAR) LIKE :q2)",
+                    ['q1' => $like, 'q2' => $like]
+                );
+                foreach ($rows as $row) {
+                    $mid = (int) ($row['mid'] ?? 0);
+                    if ($mid > 0) {
+                        $ids[$mid] = true;
+                    }
+                }
+            } catch (Throwable) {
+            }
+        }
+        return $ids;
     }
 
     /**
@@ -476,11 +647,14 @@ final class MediaLibraryService
         }
 
         $map = [];
+        // S9: همهٔ پرس‌وجوهای زیر فقط برای همین شناسه‌ها اجرا می‌شوند؛ دیگر کل جدول‌ها بارگذاری نمی‌شوند.
+        $ph = implode(',', array_fill(0, count($ids), '?'));
 
         if (self::tableExists('businesses')) {
             try {
                 $bizCovers = DB::fetchAll(
-                    'SELECT id, name, status, cover_media_id FROM businesses WHERE cover_media_id IS NOT NULL'
+                    "SELECT id, name, status, cover_media_id FROM businesses WHERE cover_media_id IS NOT NULL AND cover_media_id IN ({$ph})",
+                    $ids
                 );
                 foreach ($bizCovers as $row) {
                     $mid = (int) ($row['cover_media_id'] ?? 0);
@@ -501,9 +675,11 @@ final class MediaLibraryService
         if (self::tableExists('business_photos') && self::tableExists('businesses')) {
             try {
                 $bizPhotos = DB::fetchAll(
-                    'SELECT bp.media_id, b.id AS business_id, b.name, b.status
+                    "SELECT bp.media_id, b.id AS business_id, b.name, b.status
                      FROM business_photos bp
-                     INNER JOIN businesses b ON b.id = bp.business_id'
+                     INNER JOIN businesses b ON b.id = bp.business_id
+                     WHERE bp.media_id IN ({$ph})",
+                    $ids
                 );
                 foreach ($bizPhotos as $row) {
                     $mid = (int) ($row['media_id'] ?? 0);
@@ -524,10 +700,11 @@ final class MediaLibraryService
         if (self::tableExists('article_extras') && self::tableExists('articles')) {
             try {
                 $artCovers = DB::fetchAll(
-                    'SELECT ae.cover_media_id, a.id AS article_id, a.title, a.status
+                    "SELECT ae.cover_media_id, a.id AS article_id, a.title, a.status
                      FROM article_extras ae
                      INNER JOIN articles a ON a.id = ae.article_id
-                     WHERE ae.cover_media_id IS NOT NULL'
+                     WHERE ae.cover_media_id IS NOT NULL AND ae.cover_media_id IN ({$ph})",
+                    $ids
                 );
                 foreach ($artCovers as $row) {
                     $mid = (int) ($row['cover_media_id'] ?? 0);
@@ -552,7 +729,10 @@ final class MediaLibraryService
                      FROM article_revisions ar
                      INNER JOIN articles a ON a.id = ar.article_id
                      WHERE ar.status IN ('draft', 'review')
-                       AND ar.payload_json LIKE '%cover_media_id%'"
+                       AND ar.payload_json LIKE '%cover_media_id%'
+                       AND JSON_VALID(ar.payload_json)
+                       AND CAST(JSON_UNQUOTE(JSON_EXTRACT(ar.payload_json, '$.cover_media_id')) AS UNSIGNED) IN ({$ph})",
+                    $ids
                 );
                 foreach ($revRows as $row) {
                     $payload = json_decode((string) ($row['payload_json'] ?? ''), true);
@@ -583,7 +763,8 @@ final class MediaLibraryService
         if (self::tableExists('advertising_banners')) {
             try {
                 $banners = DB::fetchAll(
-                    'SELECT id, title, placement, active, media_id FROM advertising_banners WHERE media_id IS NOT NULL'
+                    "SELECT id, title, placement, active, media_id FROM advertising_banners WHERE media_id IS NOT NULL AND media_id IN ({$ph})",
+                    $ids
                 );
                 foreach ($banners as $row) {
                     $mid = (int) ($row['media_id'] ?? 0);

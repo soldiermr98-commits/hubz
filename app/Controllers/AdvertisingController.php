@@ -12,6 +12,7 @@ use App\Core\Response;
 use App\Services\AdvertisingService;
 use App\Services\AdminMailService;
 use App\Services\AdvertisingReportingService;
+use App\Services\AnalyticsService;
 use App\Services\MediaLibraryService;
 use App\Services\Normalizer;
 use DateTimeImmutable;
@@ -189,7 +190,11 @@ final class AdvertisingController
         $_SESSION['ad_counter_limit'] = $counter;
         session_write_close();
         if ($counter['count'] > 300) Response::noContent(429);
-        try { AdvertisingReportingService::countBanner((int)$id, $event); }
+        try {
+            AdvertisingReportingService::countBanner((int)$id, $event);
+            // S9: ثبت بنر در ماژول جامع آمار (نمایش → views، کلیک → clicks_banner) — بدون وقفه در پاسخ عمومی.
+            AnalyticsService::record($event === 'view' ? 'view' : 'banner', ['banner_id' => (int)$id] + AnalyticsService::requestContext($request));
+        }
         catch (Throwable $e) { /* Optional schema or database unavailable: public pages remain usable. */ }
         Response::noContent();
     }

@@ -12,6 +12,7 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Services\AdvertisingService;
 use App\Services\AdminMailService;
+use App\Services\AnalyticsService;
 use App\Services\ArticleService;
 use App\Services\ArticleText;
 use App\Services\BusinessSeoService;
@@ -159,7 +160,7 @@ final class PublicSiteController
 
         <?= $belowHeroAd['html'] ?>
 
-        <main class="hx-container">
+        <main class="hx-container" data-hx-page-view>
             <?php if (!empty($articles)): ?>
             <section class="hx-section">
                 <div class="hx-section-head">
@@ -670,7 +671,7 @@ final class PublicSiteController
 
         ob_start();
         ?>
-        <main class="hx-container">
+        <main class="hx-container" data-hx-page-view data-city-id="<?= (int)$city['id'] ?>">
             <nav class="hx-breadcrumb" aria-label="مسیر صفحه">
                 <a href="/">حامی‌هاب گیلان</a>
                 <span>/</span>
@@ -774,6 +775,17 @@ final class PublicSiteController
         $minRating = is_scalar($_GET['min_rating'] ?? 0) ? (string)($_GET['min_rating'] ?? '0') : '0';
         $minReviews = is_scalar($_GET['min_reviews'] ?? 0) ? (string)($_GET['min_reviews'] ?? '0') : '0';
         $search = is_string($_GET['q'] ?? null) ? mb_substr(trim($_GET['q']), 0, 100) : '';
+        if ($search !== '') {
+            // S9: ثبت جستجوی داخلی در ماژول آمار؛ صفحات دارای پارامتر q کش نمی‌شوند و ثبت سمت سرور است.
+            try {
+                AnalyticsService::recordSearch([
+                    'query' => $search,
+                    'city_id' => (int)$city['id'],
+                    'category_id' => (int)$category['id'],
+                    'path' => '/city/' . rawurlencode((string)$city['slug']) . '/' . rawurlencode((string)$category['slug']) . '/',
+                ] + AnalyticsService::requestContext($req));
+            } catch (Throwable $e) { /* آمار هرگز جلوی رندر صفحه را نمی‌گیرد */ }
+        }
         if (!in_array($minRating, ['0','3','4','4.5'], true)) $minRating = '0';
         if (!in_array($minReviews, ['0','10','50','100'], true)) $minReviews = '0';
         $where = "b.city_id = :city_id AND b.category_id = :cat_id AND b.status = 'published'";
@@ -813,7 +825,7 @@ final class PublicSiteController
 
         ob_start();
         ?>
-        <main class="hx-container hx-catalog">
+        <main class="hx-container hx-catalog" data-hx-page-view data-city-id="<?= (int)$city['id'] ?>" data-category-id="<?= (int)$category['id'] ?>">
             <nav class="hx-breadcrumb" aria-label="مسیر صفحه">
                 <a href="/">حامی‌هاب گیلان</a><span>/</span>
                 <a href="/city/<?= self::e($city['slug']) ?>/"><?= self::e($city['name_fa']) ?></a><span>/</span>
@@ -1404,20 +1416,60 @@ final class PublicSiteController
     }
 
     /**
-     * POST /api/v1/events/track — ثبت سبک کلیک‌های تماس، نقشه، اینستاگرام و وب‌سایت در جدول events_daily
+     * POST /api/v1/events/track — ثبت سبک بازدید و کلیک‌های تماس، نقشه، اینستاگرام و وب‌سایت.
+     * S9: علاوه بر جدول قدیمی events_daily، رویداد در ماژول جامع آمار (تجمیع روزانه + لاگ جزئیات) ثبت می‌شود.
+     * بارنامه جدید شامل path، referrer، utm و شناسه شهر/دسته است؛ بارنامه قدیمی صفحات کش‌شده هم پذیرفته می‌شود.
      */
     public static function trackEvent(Request $req, array $params = []): void
     {
+        if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 2048 || strlen($req->rawBody()) > 2048) {
+            Response::json(['ok'=>false,'error'=>'بارنامه رویداد بیش از حد مجاز است.'], 422);
+        }
         $bizId = max(0, (int)$req->input('business_id', 0));
         $artId = max(0, (int)$req->input('article_id', 0));
+        $cityId = max(0, (int)$req->input('city_id', 0));
+        $catId = max(0, (int)$req->input('category_id', 0));
         $type = (string)$req->input('event_type', '');
-        if (!in_array($type, ['view','call','map','instagram','whatsapp','website'], true) || (!$bizId && !$artId)) {
+        if (!in_array($type, ['view','call','map','instagram','whatsapp','website'], true)
+            || (!$bizId && !$artId && !$cityId && !$catId)) {
             Response::json(['ok'=>false,'error'=>'رویداد نامعتبر است.'], 422);
         }
+        Auth::startSessionIfNeeded();
+        $period = (int)floor(time() / 600);
+        $counter = $_SESSION['hhx_track_limit'] ?? ['period'=>$period,'count'=>0];
+        if (!is_array($counter) || (int)($counter['period'] ?? 0) !== $period) $counter = ['period'=>$period,'count'=>0];
+        $counter['count'] = (int)($counter['count'] ?? 0) + 1;
+        $_SESSION['hhx_track_limit'] = $counter;
+        session_write_close();
+        if ($counter['count'] > 600) Response::json(['ok'=>true]);
         try {
-            if ($bizId && !DB::fetchOne("SELECT id FROM businesses WHERE id=:id AND status='published'", ['id'=>$bizId])) Response::json(['ok'=>false,'error'=>'مورد یافت نشد.'], 404);
-            if ($artId && !DB::fetchOne("SELECT id FROM articles WHERE id=:id AND status='published'", ['id'=>$artId])) Response::json(['ok'=>false,'error'=>'مورد یافت نشد.'], 404);
-            DB::query("INSERT INTO events_daily (day,business_id,article_id,type,cnt) VALUES (CURDATE(),:bid,:aid,:type,1) ON DUPLICATE KEY UPDATE cnt=cnt+1", ['bid'=>$bizId,'aid'=>$artId,'type'=>$type]);
+            $bizTitle = '';
+            $artTitle = '';
+            if ($bizId) {
+                $row = DB::fetchOne("SELECT id, name FROM businesses WHERE id=:id AND status='published'", ['id'=>$bizId]);
+                if (!$row) Response::json(['ok'=>false,'error'=>'مورد یافت نشد.'], 404);
+                $bizTitle = (string)($row['name'] ?? '');
+            }
+            if ($artId) {
+                $row = DB::fetchOne("SELECT id, title FROM articles WHERE id=:id AND status='published'", ['id'=>$artId]);
+                if (!$row) Response::json(['ok'=>false,'error'=>'مورد یافت نشد.'], 404);
+                $artTitle = (string)($row['title'] ?? '');
+            }
+            if ($bizId || $artId) {
+                DB::query("INSERT INTO events_daily (day,business_id,article_id,type,cnt) VALUES (CURDATE(),:bid,:aid,:type,1) ON DUPLICATE KEY UPDATE cnt=cnt+1", ['bid'=>$bizId,'aid'=>$artId,'type'=>$type]);
+            }
+            // ثبت در ماژول جامع آمار S9 — شکستش هرگز پاسخ سایت را خراب نمی‌کند.
+            AnalyticsService::record($type === 'website' ? 'website' : $type, [
+                'business_id' => $bizId,
+                'article_id' => $artId,
+                'city_id' => $cityId,
+                'category_id' => $catId,
+                'target_title' => $bizTitle !== '' ? $bizTitle : $artTitle,
+                'path' => $req->input('path', ''),
+                'referrer' => $req->input('referrer', ''),
+                'search_query' => $req->input('search_query', ''),
+                'utm' => is_array($req->input('utm', null)) ? (array)$req->input('utm', null) : [],
+            ] + AnalyticsService::requestContext($req));
             Response::json(['ok'=>true]);
         } catch (Throwable $e) {
             error_log('Event tracking failed: ' . $e->getMessage());
@@ -1981,7 +2033,7 @@ final class PublicSiteController
         <?= self::icon('arrow-up', 'hx-icon') ?>
         <span class="hx-visually-hidden">بازگشت به بالا</span>
     </button>
-    <script src="/assets/js/public.js?v=s12.0" defer></script>
+    <script src="/assets/js/public.js?v=s13.0" defer></script>
 </body>
 </html>
         <?php

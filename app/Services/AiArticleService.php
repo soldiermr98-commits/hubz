@@ -9,6 +9,9 @@ use RuntimeException;
  * A deliberately small, server-side provider boundary. Adding a provider means
  * adding an adapter and registering it here; request bodies can never choose a URL.
  * No prompt, credential, or provider response is written to the database/logs.
+ * S9: only status codes and fixed Persian guidance are recorded (AiServiceLogger);
+ * S9: admins may override each provider's endpoint base URL (panel setting, https-only)
+ * so blocked regions can route calls through their own Cloudflare Worker or proxy.
  */
 interface ArticleTextProvider
 {
@@ -19,10 +22,12 @@ interface ArticleTextProvider
 
 final class GeminiArticleProvider implements ArticleTextProvider
 {
+    public function __construct(private readonly string $base = 'https://generativelanguage.googleapis.com/v1beta') {}
+
     public function request(string $model, string $apiKey, string $prompt): array
     {
         return [
-            'url'=>'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($model) . ':generateContent',
+            'url'=>$this->base . '/models/' . rawurlencode($model) . ':generateContent',
             'headers'=>['Content-Type: application/json', 'x-goog-api-key: ' . $apiKey],
             // Newer Gemini models ignore (and future ones may reject) sampling parameters.
             'body'=>['contents'=>[['role'=>'user','parts'=>[['text'=>$prompt]]]],
@@ -135,13 +140,29 @@ final class AiArticleService
     {
         $this->providers = [];
         foreach (self::REGISTRY as $id=>$provider) {
+            // S9: نشانی جایگزین فقط از تنظیمات امن سرور می‌آید (اعتبارسنجی https)؛
+            // برای پروتکل chat، نشانی کامل endpoint جایگزین می‌شود؛ برای gemini، پایه‌ای که
+            // /models/{model}:generateContent به آن اضافه می‌شود.
+            $override = $this->config['providers'][$id]['base_url'] ?? '';
+            $base = is_string($override) && self::validBaseUrl($override) ? rtrim($override, '/') : '';
             $adapter = match ($provider['protocol']) {
-                'gemini' => new GeminiArticleProvider(),
-                'chat' => new ChatArticleProvider($provider['url'], $provider['limit_field'] ?? 'max_tokens', $provider['model_options'] ?? []),
+                'gemini' => new GeminiArticleProvider($base !== '' ? $base : 'https://generativelanguage.googleapis.com/v1beta'),
+                'chat' => new ChatArticleProvider($base !== '' ? $base : $provider['url'], $provider['limit_field'] ?? 'max_tokens', $provider['model_options'] ?? []),
                 default => throw new RuntimeException('پروتکل سرویس هوش مصنوعی معتبر نیست.'),
             };
             $this->providers[$id] = ['label'=>$provider['label'], 'adapter'=>$adapter];
         }
+    }
+
+    /** S9: اعتبارسنجی نشانی جایگزین — فقط https، بدون query/fragment، حداکثر ۳۰۰ نویسه. */
+    public static function validBaseUrl(string $url): bool
+    {
+        if ($url === '' || strlen($url) > 300) return false;
+        $parts = parse_url($url);
+        if (!is_array($parts)) return false;
+        if (strtolower((string)($parts['scheme'] ?? '')) !== 'https' || empty($parts['host'])) return false;
+        if (($parts['query'] ?? '') !== '' || ($parts['fragment'] ?? '') !== '') return false;
+        return (bool)preg_match('#^https://[A-Za-z0-9._~%-]+(?::[0-9]{1,5})?(?:/[^\s<>"\']*)?$#', $url);
     }
 
     public function status(): array
@@ -210,27 +231,55 @@ final class AiArticleService
     /** @param callable|null $transport Test seam; production always uses the fixed HTTPS transport. */
     public function send(array $prepared, ?callable $transport = null): string
     {
-        $request = $prepared['request'];
-        $result = $transport ? $transport($request) : self::postJson($request);
-        if (!is_array($result) || !isset($result['status'], $result['body'])) throw new RuntimeException('پاسخ سرویس هوش مصنوعی نامعتبر بود.');
+        $providerId = (string)($prepared['id'] ?? '');
+        $model = (string)($prepared['model'] ?? '');
+        $log = static fn(bool $ok, ?int $status, string $msg) => AiServiceLogger::log($providerId, $model, $ok, $status, $msg);
+        try {
+            $request = $prepared['request'];
+            $result = $transport ? $transport($request) : self::postJson($request);
+        } catch (RuntimeException $e) {
+            // S9: خطای ارتباطی (شبکه/زمان) با کد وضعیت NULL ثبت می‌شود — دقیقاً همان مورد ۴۰۳/تحریم.
+            $log(false, null, 'ارتباط با سرویس ناموفق بود؛ مسیر خروجی، فیلتر منطقه یا شبکه سرور را بررسی کنید.');
+            throw $e;
+        }
+        if (!is_array($result) || !isset($result['status'], $result['body'])) {
+            $log(false, null, 'پاسخ سرویس هوش مصنوعی نامعتبر بود.');
+            throw new RuntimeException('پاسخ سرویس هوش مصنوعی نامعتبر بود.');
+        }
         $status = (int)$result['status'];
         if ($status < 200 || $status >= 300) {
-            throw new RuntimeException(self::providerError((string)($prepared['id'] ?? ''), $status, (string)$result['body']));
+            $message = self::providerError((string)($prepared['id'] ?? ''), $status, (string)$result['body']);
+            $log(false, $status, $message);
+            throw new RuntimeException($message);
         }
         if ($status === 202) {
             // This integration performs one synchronous request, not provider-specific polling.
-            throw new RuntimeException('سرویس درخواست را در صف قرار داد (HTTP 202)، اما پاسخ نهایی در این درخواست دریافت نشد.');
+            $message = 'سرویس درخواست را در صف قرار داد (HTTP 202)، اما پاسخ نهایی در این درخواست دریافت نشد.';
+            $log(false, $status, $message);
+            throw new RuntimeException($message);
         }
         $decoded = json_decode((string)$result['body'], true);
-        if (!is_array($decoded)) throw new RuntimeException('پاسخ سرویس هوش مصنوعی قابل خواندن نبود.');
+        if (!is_array($decoded)) {
+            $log(false, $status, 'پاسخ سرویس هوش مصنوعی قابل خواندن نبود.');
+            throw new RuntimeException('پاسخ سرویس هوش مصنوعی قابل خواندن نبود.');
+        }
         $text = trim($prepared['adapter']->text($decoded));
         if ($text === '' && ($prepared['id'] ?? '') === 'gemini' && ($decoded['candidates'][0]['finishReason'] ?? '') === 'MAX_TOKENS') {
-            throw new RuntimeException('سرویس پاسخ داد، اما خروجی پیش از تولید متن به سقف توکن رسید (MAX_TOKENS).');
+            $message = 'سرویس پاسخ داد، اما خروجی پیش از تولید متن به سقف توکن رسید (MAX_TOKENS).';
+            $log(false, $status, $message);
+            throw new RuntimeException($message);
         }
         if ($text === '' && ($decoded['choices'][0]['finish_reason'] ?? '') === 'length') {
-            throw new RuntimeException('سرویس پاسخ داد، اما پیش از تولید متن نهایی به سقف توکن رسید (length). مدل یا تنظیمات آن را بررسی کنید.');
+            $message = 'سرویس پاسخ داد، اما پیش از تولید متن نهایی به سقف توکن رسید (length). مدل یا تنظیمات آن را بررسی کنید.';
+            $log(false, $status, $message);
+            throw new RuntimeException($message);
         }
-        if ($text === '') throw new RuntimeException('سرویس متن قابل استفاده‌ای برنگرداند؛ ممکن است خروجی مسدود شده باشد.');
+        if ($text === '') {
+            $message = 'سرویس متن قابل استفاده‌ای برنگرداند؛ ممکن است خروجی مسدود شده باشد.';
+            $log(false, $status, $message);
+            throw new RuntimeException($message);
+        }
+        $log(true, $status, 'اتصال موفق بود.');
         return mb_substr($text, 0, 18000);
     }
 

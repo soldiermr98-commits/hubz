@@ -12,6 +12,7 @@ use App\Services\AiArticleService;
 use App\Services\AiProviderSettings;
 use App\Services\AiProviderVaultException;
 use App\Services\AiQuotaService;
+use App\Services\AiServiceLogger;
 use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
@@ -67,11 +68,12 @@ final class AiProviderController
         $enabled = $request->input('enabled', false);
         $confirmed = $request->input('free_tier_confirmed', false);
         $version = $request->input('version', null);
-        if (!is_string($id) || !is_string($model) || !is_string($key) || !is_bool($enabled) || !is_bool($confirmed) || !is_int($version)) {
+        $baseUrl = $request->input('base_url', '');
+        if (!is_string($id) || !is_string($model) || !is_string($key) || !is_bool($enabled) || !is_bool($confirmed) || !is_int($version) || !is_string($baseUrl)) {
             Response::json(['ok'=>false, 'error'=>'اطلاعات تنظیمات معتبر نیست.'], 422);
         }
         try {
-            self::settings()->save($id, $model, $key, $enabled, $confirmed, $version);
+            self::settings()->save($id, $model, $key, $enabled, $confirmed, $version, false, $baseUrl);
             Response::json(['ok'=>true, 'message'=>'تنظیمات ذخیره شد. برای بررسی مدل و اتصال، دکمه تست را بزنید.']);
         } catch (InvalidArgumentException $e) {
             Response::json(['ok'=>false, 'error'=>$e->getMessage()], 422);
@@ -103,6 +105,22 @@ final class AiProviderController
             Response::json(['ok'=>false, 'error'=>'حذف انجام نشد؛ وضعیت تنظیمات را بررسی کنید.'], 500);
         } catch (Throwable $e) {
             Response::json(['ok'=>false, 'error'=>'حذف انجام نشد؛ وضعیت هاست را بررسی کنید.'], 500);
+        }
+    }
+
+    /** S9: آخرین تلاش‌های اتصال سرویس با کد وضعیت دقیق — برای عیب‌یابی ۴۰۳ و پراکسی. */
+    public static function logs(Request $request): void
+    {
+        self::authorize($request, false);
+        $id = $request->input('provider', '');
+        $limit = (int) $request->input('limit', 15);
+        if (!is_string($id) || !isset(AiArticleService::catalog()[$id])) {
+            Response::json(['ok'=>false, 'error'=>'سرویس معتبر انتخاب کنید.'], 422);
+        }
+        try {
+            Response::json(['ok'=>true, 'provider'=>$id, 'logs'=>AiServiceLogger::recent($id, $limit)]);
+        } catch (Throwable $e) {
+            Response::json(['ok'=>false, 'error'=>'خواندن لاگ سرویس ناموفق بود؛ وضعیت دیتابیس را بررسی کنید.'], 500);
         }
     }
 

@@ -564,6 +564,8 @@ export interface AiModelSuggestion { id:string; note:string }
 export interface AiManagedProvider extends AiProviderStatus {
   enabled:boolean; free_tier_confirmed:boolean; key_configured:boolean;
   source:'none'|'file'|'panel'; version:number; error:string;
+  // S9: نشانی جایگزین endpoint (پراکسی/Cloudflare Worker) — اختیاری و سازگار با بک‌اند قدیمی.
+  base_url?:string;
   // Optional for compatibility with a previously deployed backend during an update.
   default_model?:string; suggested_models?:AiModelSuggestion[];
 }
@@ -573,7 +575,7 @@ export async function fetchAiProviders(): Promise<{ok:boolean;schema_ready:boole
 export async function fetchAiProviderManagement(): Promise<{ok:boolean;schema_ready:boolean;providers:AiManagedProvider[]}> {
   return request('/api/v1/ai/providers/manage', {cache:'no-store'});
 }
-export async function saveAiProvider(payload:{provider:string;model:string;api_key:string;enabled:boolean;free_tier_confirmed:boolean;version:number},csrf:string):Promise<{ok:boolean;message?:string;error?:string}> {
+export async function saveAiProvider(payload:{provider:string;model:string;api_key:string;enabled:boolean;free_tier_confirmed:boolean;version:number;base_url?:string},csrf:string):Promise<{ok:boolean;message?:string;error?:string}> {
   return action('/api/v1/ai/providers/save',payload,csrf);
 }
 export async function removeAiProvider(provider:string,version:number,csrf:string):Promise<{ok:boolean;message?:string;error?:string}> {
@@ -861,3 +863,46 @@ export async function autoBuildCityCategoryArticle(cityId:number,categoryId:numb
 export async function flushPublicHtmlCache(csrf:string): Promise<any> { return action('/api/v1/cache/flush',{},csrf); }
 export async function fetchAnalyticsSummary(): Promise<AnalyticsSummaryState> { return request('/api/v1/analytics/summary'); }
 export async function runCronMaintenanceS6(csrf:string): Promise<any> { return action('/api/v1/system/cron-run',{},csrf); }
+
+// ============================================================ S9 - ماژول جامع آمار بازدید و کلیک
+
+export interface AnalyticsTotals { views:number; uniques:number; call:number; map:number; website:number; instagram:number; whatsapp:number; banner:number; searches:number }
+export interface AnalyticsSeriesRow extends AnalyticsTotals { day:string }
+export interface AnalyticsTopRow { id:number; title:string; views:number; uniques:number; call:number; map:number; website:number; instagram:number; whatsapp:number; banner:number; searches:number }
+export interface AnalyticsDashboard { ok:boolean; from:string; to:string; series:AnalyticsSeriesRow[]; totals:AnalyticsTotals; tops:Record<string, AnalyticsTopRow[]>; available_types:string[] }
+export interface AnalyticsLogRow { id:number; occurred_at:string; event_type:string; target_type:string; target_id:number; target_title:string; path:string; ip_address:string; ref_source:string; ref_host:string; referrer:string; utm_source:string; utm_medium:string; utm_campaign:string; utm_term:string; device:string; browser:string; search_query:string }
+export interface AnalyticsLogFilters { from?:string; to?:string; event_type?:string; target_type?:string; target_id?:number; ref_source?:string; q?:string }
+
+function analyticsQuery(params:Record<string, string|number|undefined>): URLSearchParams {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '' && v !== 0) q.set(k, String(v));
+  }
+  return q;
+}
+
+export async function fetchAnalyticsDashboard(params:{days?:number}&AnalyticsLogFilters = {}):Promise<AnalyticsDashboard> {
+  return request('/api/v1/analytics/dashboard?' + analyticsQuery({ days:params.days ?? 7, ...params }), { cache:'no-store' });
+}
+
+export async function fetchAnalyticsLogs(params:{page?:number;per_page?:number}&AnalyticsLogFilters = {}):Promise<{ok:boolean;items:AnalyticsLogRow[];pagination:{page:number;per_page:number;total:number;total_pages:number}}> {
+  return request('/api/v1/analytics/logs?' + analyticsQuery({ page:params.page ?? 1, per_page:params.per_page ?? 25, ...params }), { cache:'no-store' });
+}
+
+/** لینک مستقیم دانلود خروجی اکسل (CSV با UTF-8 BOM) - احراز هویت با نشست فعال انجام می‌شود. */
+export function analyticsExportUrl(type:'aggregate'|'logs', params:AnalyticsLogFilters = {}): string {
+  return '/api/v1/analytics/export?' + analyticsQuery({ type, ...params }).toString();
+}
+
+export interface AnalyticsSettingsState { ok:boolean; raw_retention_days:number; visitor_retention_days:number; ai_logs_retention_days:number }
+export async function fetchAnalyticsSettings():Promise<AnalyticsSettingsState> { return request('/api/v1/analytics/settings', { cache:'no-store' }); }
+export async function saveAnalyticsSettings(rawRetentionDays:number, csrf:string):Promise<{ok:boolean;message?:string;error?:string;raw_retention_days?:number}> {
+  return action('/api/v1/analytics/settings', { raw_retention_days:rawRetentionDays }, csrf);
+}
+
+// ============================================================ S9 - لاگ تلاش‌های اتصال هوش مصنوعی
+
+export interface AiServiceLogRow { ok:number; status_code:number|null; message:string; created_at:string }
+export async function fetchAiProviderLogs(provider:string, limit=15):Promise<{ok:boolean;provider:string;logs:AiServiceLogRow[]}> {
+  return request('/api/v1/ai/providers/logs?' + new URLSearchParams({ provider, limit:String(limit) }), { cache:'no-store' });
+}
