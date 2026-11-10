@@ -46,7 +46,8 @@ final class AdvertisingService
 
     public static function validImagePath(string $path): bool
     {
-        return (bool)preg_match('~\A/uploads/[a-zA-Z0-9_\-/]+\.webp\z~', $path);
+        // .webp for optimized static images, .gif for optimized animated banners.
+        return (bool)preg_match('~\A/uploads/[a-zA-Z0-9_\-/]+\.(?:webp|gif)\z~', $path);
     }
 
     public static function earliestBoundary(int ...$boundaries): int
@@ -58,6 +59,19 @@ final class AdvertisingService
             }
         }
         return $earliest;
+    }
+
+    /** نمایش فارسی و خوانا برای حجم آزادشدهٔ دیسک در پیام‌های پنل */
+    public static function formatBytesFa(int $bytes): string
+    {
+        $b = max(0, $bytes);
+        if ($b < 1024) {
+            return $b . ' بایت';
+        }
+        if ($b < 1048576) {
+            return number_format($b / 1024, 1) . ' کیلوبایت';
+        }
+        return number_format($b / 1048576, 2) . ' مگابایت';
     }
 
     /**

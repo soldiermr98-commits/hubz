@@ -42,6 +42,7 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
 
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [detachOnDelete, setDetachOnDelete] = useState(false);
+  const [forceOnDelete, setForceOnDelete] = useState(false);
 
   const [uploadAlt, setUploadAlt] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -91,6 +92,17 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
       return;
     }
     const origBytes = Number(res.media.original_bytes || file.size || 0);
+    const isGif = res.media.mime_type === 'image/gif';
+    if (isGif) {
+      setUploadAlt('');
+      setMessage({
+        error: false,
+        text: `GIF متحرک #${res.media.id} با حفظ کامل انیمیشن در مسیر ${res.media.host_dir || 'public_html/uploads'} ذخیره شد${res.media.gif_optimized ? ' و به‌صورت خودکار بهینه گردید' : ''}.`,
+      });
+      setPage(1);
+      await load();
+      return;
+    }
     const webp1200 = Number(res.media.webp_1200_bytes || 0);
     const savingsText =
       origBytes > 0 && webp1200 > 0
@@ -126,10 +138,18 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
     setSelectedIds(unusedIds);
   };
 
-  const handleDeleteIds = async (targetIds: number[], forceDetach: boolean) => {
+  const handleDeleteIds = async (targetIds: number[], forceDetach: boolean, forceBanners: boolean = false) => {
     if (!isAdmin || targetIds.length === 0 || busy) return;
     const usedSelected = items.filter((i) => targetIds.includes(i.id) && i.usage_count > 0);
-    if (usedSelected.length > 0 && !forceDetach) {
+    const bannerLocked = usedSelected.filter((i) => (i.usages || []).some((u) => u.type === 'advertising_banner'));
+    if (bannerLocked.length > 0 && !forceBanners) {
+      setMessage({
+        error: true,
+        text: `${bannerLocked.length} تصویر انتخاب‌شده به بنر تبلیغاتی متصل است. برای حذف کامل بدون هیچ اثر باقی‌مانده، تیک «حذف کامل اجباری (شامل جداسازی از بنرها)» را فعال کنید؛ بنر متصل غیرفعال و تصویر از دیتابیس و هاست کامل حذف می‌شود.`,
+      });
+      return;
+    }
+    if (usedSelected.length > 0 && !forceDetach && !forceBanners) {
       setMessage({
         error: true,
         text: `${usedSelected.length} تصویر انتخاب‌شده در حال حاضر در کسب‌وکار، مقاله یا بنر استفاده شده‌اند. اگر می‌خواهید از کسب‌وکار/مقاله جدا شوند و حذف گردند، تیک «جداسازی خودکار و حذف» را فعال کنید.`,
@@ -137,16 +157,18 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
       return;
     }
 
-    const confirmMsg = forceDetach
-      ? `آیا از حذف دائمی ${targetIds.length} تصویر از دیتابیس و حذف فیزیکی فایل‌های WebP آن‌ها از هاست (همراه با جداسازی از کسب‌وکارها/مقالات) مطمئن هستید؟ این عملیات غیرقابل بازگشت است.`
-      : `آیا از حذف دائمی ${targetIds.length} تصویر بلااستفاده از دیتابیس و حذف فیزیکی فایل‌های WebP آن‌ها از هاست (public_html/uploads) مطمئن هستید؟`;
+    const confirmMsg = forceBanners
+      ? `آیا از حذف کامل و دائمی ${targetIds.length} تصویر مطمئن هستید؟ رکورد دیتابیس، فایل‌های روی هاست و اتصال بنرها/کسب‌وکارها/مقالات همگی حذف یا جداسازی می‌شوند؛ بنرهای متصل غیرفعال خواهند شد. این عملیات غیرقابل بازگشت است و هیچ اثری باقی نمی‌ماند.`
+      : forceDetach
+      ? `آیا از حذف دائمی ${targetIds.length} تصویر از دیتابیس و حذف فیزیکی فایل‌های آن‌ها از هاست (همراه با جداسازی از کسب‌وکارها/مقالات) مطمئن هستید؟ این عملیات غیرقابل بازگشت است.`
+      : `آیا از حذف دائمی ${targetIds.length} تصویر بلااستفاده از دیتابیس و حذف فیزیکی فایل‌های آن‌ها از هاست (public_html/uploads) مطمئن هستید؟`;
 
     if (!window.confirm(confirmMsg)) return;
 
     setBusy(true);
     setMessage(null);
     const res = await deleteMediaItems(
-      { ids: targetIds, detach_usages: forceDetach },
+      { ids: targetIds, detach_usages: forceDetach || forceBanners, force: forceBanners },
       csrfToken
     );
     setBusy(false);
@@ -158,7 +180,8 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
 
     setSelectedIds((prev) => prev.filter((id) => !targetIds.includes(id)));
     setDetachOnDelete(false);
-    setMessage({ error: false, text: res.message || 'تصاویر انتخاب‌شده حذف شدند.' });
+    setForceOnDelete(false);
+    setMessage({ error: false, text: res.message || 'تصاویر انتخاب‌شده به‌طور کامل حذف شدند.' });
     await load();
   };
 
@@ -207,7 +230,7 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
         <div>
           <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <ImageIcon className="w-5 h-5 text-blue-700" />
-            مدیریت رسانه و تصاویر WebP هاست
+            مدیریت رسانه و تصاویر بهینه هاست (WebP / GIF)
           </h1>
           <p className="text-xs text-slate-600 mt-1 leading-6">
             مشاهده شفاف تمام تصاویر جدول <code className="font-mono">media</code> در دیتابیس، مسیر دقیق ذخیره‌سازی روی هاست DirectAdmin (<code className="font-mono">public_html/uploads/YYYY/MM/</code>)، محل استفاده در سایت و پاک‌سازی امن تصاویر بلااستفاده.
@@ -274,16 +297,16 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-4">
-            <div className="text-xs text-slate-500">وضعیت فرمت بهینه WebP روی دیسک</div>
+            <div className="text-xs text-slate-500">وضعیت فرمت بهینه روی دیسک (WebP / GIF)</div>
             <div className="text-lg font-bold text-emerald-700 mt-1">
-              {summary.disk_webp_files.toLocaleString('fa-IR')} فایل .webp
+              {summary.disk_webp_files.toLocaleString('fa-IR')} فایل بهینه
             </div>
             <div className="text-[11px] text-slate-600 mt-1">
               {summary.disk_non_webp_files === 0 ? (
-                <span className="text-emerald-700">۱۰۰٪ خروجی‌ها WebP هستند (۰ فایل غیر WebP)</span>
+                <span className="text-emerald-700">۱۰۰٪ خروجی‌ها بهینه هستند (WebP یا GIF متحرک)</span>
               ) : (
                 <span className="text-amber-800">
-                  {summary.disk_non_webp_files.toLocaleString('fa-IR')} فایل قدیمی غیر WebP در دیسک
+                  {summary.disk_non_webp_files.toLocaleString('fa-IR')} فایل قدیمی غیربهینه در دیسک
                 </span>
               )}
             </div>
@@ -316,7 +339,7 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
       <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
         <div className="flex items-center gap-2 font-bold text-sm text-slate-900">
           <Info className="w-4 h-4 text-blue-700" />
-          <span>جدول ابعاد پیشنهادی بخش‌های سایت و سیاست تبدیل اجباری ۱۰۰٪ به WebP</span>
+          <span>جدول ابعاد پیشنهادی بخش‌های سایت و سیاست تبدیل خودکار (WebP برای ثابت‌ها، GIF بهینه برای متحرک‌ها)</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
           {Object.values(MEDIA_DIMENSION_GUIDES).map((g) => (
@@ -345,7 +368,7 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
           </label>
           <label className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold cursor-pointer">
             <Upload className="w-4 h-4" />
-            <span>{uploading ? 'در حال تبدیل به WebP بهینه…' : 'آپلود تصویر جدید (تبدیل خودکار به WebP)'}</span>
+            <span>{uploading ? 'در حال پردازش و بهینه‌سازی تصویر…' : 'آپلود تصویر جدید (WebP خودکار · پشتیبانی GIF متحرک)'}</span>
             <input
               type="file"
               accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif"
@@ -426,10 +449,18 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
                   />
                   <span>جداسازی خودکار از کسب‌وکار/مقاله در صورت استفاده</span>
                 </label>
+                <label className="inline-flex items-center gap-1.5 text-rose-800 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={forceOnDelete}
+                    onChange={(e) => setForceOnDelete(e.target.checked)}
+                  />
+                  <span>حذف کامل اجباری (شامل جداسازی از بنرها)</span>
+                </label>
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => void handleDeleteIds(selectedIds, detachOnDelete)}
+                  onClick={() => void handleDeleteIds(selectedIds, detachOnDelete, forceOnDelete)}
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-rose-700 hover:bg-rose-800 text-white font-bold disabled:opacity-50"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -605,17 +636,27 @@ export const MediaManagerView: React.FC<Props> = ({ csrfToken, isAdmin }) => {
                     {isAdmin && (
                       <button
                         type="button"
-                        disabled={busy || !item.can_force_detach}
+                        disabled={busy}
                         title={
-                          !item.can_force_detach
-                            ? 'این تصویر به بنر تبلیغاتی متصل است؛ ابتدا تصویر بنر را تغییر دهید.'
+                          (item.usages || []).some((u) => u.type === 'advertising_banner')
+                            ? 'حذف کامل اجباری: بنر متصل غیرفعال و تصویر بدون هیچ اثر باقی‌مانده حذف می‌شود'
                             : 'حذف تصویر از دیتابیس و هاست'
                         }
-                        onClick={() => void handleDeleteIds([item.id], item.usage_count > 0)}
+                        onClick={() =>
+                          void handleDeleteIds(
+                            [item.id],
+                            item.usage_count > 0,
+                            (item.usages || []).some((u) => u.type === 'advertising_banner')
+                          )
+                        }
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-rose-200 text-rose-700 hover:bg-rose-50 font-semibold disabled:opacity-40"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        {item.usage_count > 0 ? 'جداسازی و حذف' : 'حذف از هاست'}
+                        {(item.usages || []).some((u) => u.type === 'advertising_banner')
+                          ? 'حذف کامل (جداسازی از بنر)'
+                          : item.usage_count > 0
+                          ? 'جداسازی و حذف'
+                          : 'حذف از هاست'}
                       </button>
                     )}
                   </div>

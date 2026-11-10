@@ -590,7 +590,7 @@ export interface AdInquiry { id:number; name:string; phone:string; message:strin
 export async function fetchAdvertising(): Promise<{ok:boolean;schema_ready:boolean;reporting_schema_ready:boolean;placements:Record<string,string>;banners:AdBanner[];inquiries:AdInquiry[]}> { return request('/api/v1/advertising',{cache:'no-store'}); }
 export async function updateAdvertisingSchema(csrf:string):Promise<any> { return action('/api/v1/system/update-advertising-schema',{},csrf); }
 export async function saveAdBanner(payload:unknown,csrf:string):Promise<any> { return action('/api/v1/advertising/banner',payload,csrf); }
-export async function deleteAdBanner(id:number,version:number,csrf:string):Promise<any> { return action('/api/v1/advertising/banner/delete',{id,version},csrf); }
+export async function deleteAdBanner(id:number,version:number,csrf:string,deleteMedia:boolean=false):Promise<any> { return action('/api/v1/advertising/banner/delete',{id,version,delete_media:deleteMedia},csrf); }
 export async function updateAdInquiry(id:number,operation:'new'|'handled'|'delete',csrf:string):Promise<any> { return action('/api/v1/advertising/inquiry',{id,operation},csrf); }
 
 // PDO may serialize integer columns as strings. All ledger amounts remain integer toman.
@@ -783,6 +783,8 @@ export interface MediaLibraryItem {
   total_bytes: number;
   all_files_present: boolean;
   all_webp: boolean;
+  format_ok?: boolean;
+  is_animated_gif?: boolean;
   usages: MediaUsageInfo[];
   usage_count: number;
   can_force_detach: boolean;
@@ -819,7 +821,7 @@ export async function updateMediaAltText(id: number, altText: string, csrf: stri
   return action('/api/media-library.php?action=update', { id, alt_text: altText }, csrf);
 }
 export async function deleteMediaItems(
-  payload: { ids?: number[]; detach_usages?: boolean; purge_orphans?: boolean },
+  payload: { ids?: number[]; detach_usages?: boolean; force?: boolean; purge_orphans?: boolean },
   csrf: string
 ): Promise<any> {
   return action('/api/media-library.php?action=delete', payload, csrf);

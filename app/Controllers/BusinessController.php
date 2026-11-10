@@ -833,9 +833,12 @@ final class BusinessController
 
         try {
             $media = MediaService::handleUpload($uploadedFile, $altText);
+            $isAnimatedGif = ($media['mime_type'] ?? '') === 'image/gif';
             Response::json([
                 'ok' => true,
-                'message' => 'تصویر با موفقیت به فرمت بهینه WebP (در ۳ سایز ۴۸۰، ۸۰۰ و ۱۲۰۰ پیکسل) تبدیل و ذخیره شد.',
+                'message' => $isAnimatedGif
+                    ? 'GIF متحرک با حفظ کامل انیمیشن ذخیره شد.'
+                    : 'تصویر با موفقیت به فرمت بهینه WebP (در ۳ سایز ۴۸۰، ۸۰۰ و ۱۲۰۰ پیکسل) تبدیل و ذخیره شد.',
                 'media' => $media,
             ]);
         } catch (MediaUploadException | InvalidArgumentException $e) {

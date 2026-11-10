@@ -51,7 +51,7 @@ final class MediaLibraryService
                 'aspect_ratio' => 'افقی 5:1 تا 3:1 (تکی تمام‌عرض یا جفت بنر دسکتاپ)',
                 'min_px' => '600 × 200',
                 'fit_mode' => 'نمایش کامل بدون برش (object-fit: contain)',
-                'note' => 'در هر جایگاه حداکثر ۲ بنر فعال کنار هم در دسکتاپ نمایش داده می‌شود. بنرها برش نمی‌خورند و خروجی خودکار WebP ذخیره می‌شود.',
+                'note' => 'در هر جایگاه حداکثر ۲ بنر فعال کنار هم در دسکتاپ نمایش داده می‌شود. بنرها برش نمی‌خورند؛ تصاویر ثابت به WebP بهینه و GIFهای متحرک با حفظ کامل انیمیشن و بهینه‌سازی خودکار ذخیره می‌شوند.',
             ],
         ];
     }
@@ -105,7 +105,9 @@ final class MediaLibraryService
 
             $totalBytes = 0;
             $allPresent = true;
-            $allWebp = strtolower((string) ($row['mime_type'] ?? '')) === 'image/webp';
+            $mimeLower = strtolower((string) ($row['mime_type'] ?? ''));
+            $allWebp = $mimeLower === 'image/webp';
+            $allGif = $mimeLower === 'image/gif';
             foreach ($variants as $v) {
                 $totalBytes += $v['bytes'];
                 if (!$v['exists']) {
@@ -114,7 +116,12 @@ final class MediaLibraryService
                 if (!$v['is_webp']) {
                     $allWebp = false;
                 }
+                if (!str_ends_with(strtolower($v['web_path']), '.gif')) {
+                    $allGif = false;
+                }
             }
+            // GIFهای متحرک با حفظ انیمیشن فرمت بهینه و مجاز هستند؛ غیر WebP بودن آن‌ها خطا نیست.
+            $formatOk = $allWebp || $allGif;
 
             $isUsed = count($usages) > 0;
             if ($isUsed) {
@@ -125,7 +132,7 @@ final class MediaLibraryService
             if (!$allPresent) {
                 $missingFilesCount++;
             }
-            if (!$allWebp) {
+            if (!$formatOk) {
                 $nonWebpDbCount++;
             }
 
@@ -156,6 +163,8 @@ final class MediaLibraryService
                 'total_bytes' => $totalBytes,
                 'all_files_present' => $allPresent,
                 'all_webp' => $allWebp,
+                'format_ok' => $formatOk,
+                'is_animated_gif' => $allGif,
                 'usages' => $usages,
                 'usage_count' => count($usages),
                 'can_force_detach' => !$hasBannerLock,
@@ -170,7 +179,7 @@ final class MediaLibraryService
             if ($usageFilter === 'missing_files' && $allPresent) {
                 continue;
             }
-            if ($usageFilter === 'non_webp' && $allWebp) {
+            if ($usageFilter === 'non_webp' && $formatOk) {
                 continue;
             }
 
@@ -245,12 +254,13 @@ final class MediaLibraryService
     }
 
     /**
-     * حذف امن یک یا چند تصویر از دیتابیس و حذف فیزیکی فایل‌های WebP آن‌ها از هاست
+     * حذف امن یک یا چند تصویر از دیتابیس و حذف فیزیکی فایل‌های WebP آن‌ها از هاست.
+     * با force=true تصاویر متصل به بنر تبلیغاتی هم جداسازی (media_id بنر خالی و بنر غیرفعال) و کامل حذف می‌شوند.
      *
      * @param array<int, mixed> $mediaIds
      * @return array<string, mixed>
      */
-    public static function deleteMediaItems(array $mediaIds, bool $detachUsages = false): array
+    public static function deleteMediaItems(array $mediaIds, bool $detachUsages = false, bool $force = false): array
     {
         $ids = array_values(array_unique(array_filter(
             array_map(static fn($v): int => (int) $v, $mediaIds),
@@ -301,12 +311,14 @@ final class MediaLibraryService
                     static fn(array $u): bool => ($u['type'] ?? '') === 'advertising_banner'
                 ));
                 if ($bannerUsages) {
-                    $blocked[] = [
-                        'id' => $id,
-                        'reason' => 'این تصویر به بنر تبلیغاتی متصل است؛ ابتدا تصویر بنر را تغییر دهید یا بنر را حذف کنید.',
-                        'usages' => $usages,
-                    ];
-                    continue;
+                    if (!$force) {
+                        $blocked[] = [
+                            'id' => $id,
+                            'reason' => 'این تصویر به بنر تبلیغاتی متصل است؛ ابتدا تصویر بنر را تغییر دهید یا بنر را حذف کنید (یا از حذف کامل اجباری استفاده کنید).',
+                            'usages' => $usages,
+                        ];
+                        continue;
+                    }
                 }
                 if (!$detachUsages) {
                     $blocked[] = [
@@ -327,6 +339,7 @@ final class MediaLibraryService
                 'deleted_count' => 0,
                 'deleted_files_count' => 0,
                 'freed_bytes' => 0,
+                'detached_banners' => 0,
                 'blocked' => $blocked,
             ];
         }
@@ -340,8 +353,10 @@ final class MediaLibraryService
         $hasBusinesses = self::tableExists('businesses');
         $hasBusinessPhotos = self::tableExists('business_photos');
         $hasArticleExtras = self::tableExists('article_extras');
+        $hasBanners = self::tableExists('advertising_banners');
         $deletedIds = [];
         $filesToUnlink = [];
+        $detachedBanners = 0;
 
         try {
             foreach ($deletableRows as $row) {
@@ -355,6 +370,12 @@ final class MediaLibraryService
                     }
                     if ($hasArticleExtras) {
                         DB::query('UPDATE article_extras SET cover_media_id = NULL WHERE cover_media_id = :id', ['id' => $id]);
+                    }
+                    if ($force && $hasBanners) {
+                        $detachedBanners += DB::query(
+                            'UPDATE advertising_banners SET media_id = NULL, active = 0, updated_at = NOW() WHERE media_id = :id',
+                            ['id' => $id]
+                        )->rowCount();
                     }
                 }
 
@@ -394,6 +415,7 @@ final class MediaLibraryService
             'deleted_count' => count($deletedIds),
             'deleted_files_count' => $deletedFilesCount,
             'freed_bytes' => $freedBytes,
+            'detached_banners' => $detachedBanners,
             'blocked' => $blocked,
         ];
     }
@@ -672,7 +694,8 @@ final class MediaLibraryService
                 }
                 $bytes = (int) @$fileInfo->getSize();
                 $totalBytes += $bytes;
-                if (str_ends_with(strtolower($name), '.webp')) {
+                $lowerName = strtolower($name);
+                if (str_ends_with($lowerName, '.webp') || str_ends_with($lowerName, '.gif')) {
                     $webpFiles++;
                 } else {
                     $nonWebpFiles++;

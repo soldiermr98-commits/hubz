@@ -15,6 +15,11 @@ final class MediaUploadException extends RuntimeException {}
 /**
  * Validate and re-encode all uploads strictly as optimized WebP images (480w, 800w, 1200w),
  * never storing any JPEG/PNG/GIF/BMP/AVIF original on disk, and manage the Media Library.
+ *
+ * Exception: animated GIF files keep their animation and are stored as optimized GIF
+ * (resize + layer optimization via Imagick when available, validated original otherwise),
+ * because GD cannot re-encode multi-frame GIFs and converting them to WebP would destroy
+ * the animation.
  */
 final class MediaService
 {
@@ -65,7 +70,7 @@ final class MediaService
                 'aspect_ratio' => 'افقی 5:1 تا 3:1 (تکی تمام‌عرض یا جفت بنر دسکتاپ)',
                 'min_px' => '600 × 200',
                 'fit_mode' => 'نمایش کامل بدون برش (object-fit: contain)',
-                'note' => 'در هر جایگاه حداکثر ۲ بنر فعال کنار هم در دسکتاپ نمایش داده می‌شود. بنرها برش نمی‌خورند و خروجی خودکار WebP ذخیره می‌شود.',
+                'note' => 'در هر جایگاه حداکثر ۲ بنر فعال کنار هم در دسکتاپ نمایش داده می‌شود. بنرها برش نمی‌خورند؛ تصاویر ثابت به WebP بهینه و GIFهای متحرک با حفظ کامل انیمیشن و بهینه‌سازی خودکار ذخیره می‌شوند.',
             ],
         ];
     }
@@ -139,6 +144,25 @@ final class MediaService
             || ($realMime === 'image/bmp' && $infoMime === 'image/x-ms-bmp');
         if (!$mimeCompatible) {
             throw new MediaUploadException('تصویر ارسالی آسیب‌دیده است یا هدر آن با نوع فایل هم‌خوانی ندارد.');
+        }
+
+        // Animated GIFs are supported natively: they keep their animation and are
+        // stored as an optimized GIF file. This branch runs before the WebP-only
+        // checks because re-encoding animation to static WebP would destroy it.
+        if ($realMime === 'image/gif' && self::isAnimatedGif($tmpPath)) {
+            $gifWidth = (int) $info[0];
+            $gifHeight = (int) $info[1];
+            if ($gifWidth < 100 || $gifHeight < 100) {
+                throw new MediaUploadException('ابعاد تصویر بسیار کوچک است (حداقل ۱۰۰×۱۰۰ پیکسل الزامی است).');
+            }
+            if (
+                $gifWidth > self::MAX_DIMENSION
+                || $gifHeight > self::MAX_DIMENSION
+                || $gifWidth * $gifHeight > self::MAX_PIXELS
+            ) {
+                throw new MediaUploadException('ابعاد تصویر بسیار بزرگ است؛ هر ضلع حداکثر ۱۰٬۰۰۰ و مساحت حداکثر ۲۰ میلیون پیکسل است.');
+            }
+            return self::storeAnimatedGif($tmpPath, $gifWidth, $gifHeight, $actualSize, $altText);
         }
 
         $origWidth = (int) $info[0];
@@ -532,12 +556,255 @@ final class MediaService
     }
 
     /**
+     * تشخیص GIF متحرک با پارس باینری ساختار بلوک‌های GIF؛ بدون نیاز به Imagick
+     */
+    private static function isAnimatedGif(string $filePath): bool
+    {
+        $size = @filesize($filePath);
+        if (!is_int($size) || $size < 16) {
+            return false;
+        }
+        $data = @file_get_contents($filePath);
+        if (!is_string($data) || strlen($data) < 14) {
+            return false;
+        }
+        if (!str_starts_with($data, 'GIF87a') && !str_starts_with($data, 'GIF89a')) {
+            return false;
+        }
+        $len = strlen($data);
+        $pos = 6;
+        if ($len < $pos + 7) {
+            return false;
+        }
+        $screenFlags = ord($data[$pos + 4]);
+        $pos += 7;
+        if (($screenFlags & 0x80) !== 0) {
+            $pos += 3 * (2 ** (($screenFlags & 0x07) + 1));
+        }
+        $frames = 0;
+        while ($pos < $len) {
+            $block = ord($data[$pos]);
+            if ($block === 0x21) { // Extension Introducer
+                if ($pos + 2 > $len) {
+                    break;
+                }
+                $pos += 2;
+                while ($pos < $len) {
+                    $subLen = ord($data[$pos]);
+                    $pos++;
+                    if ($subLen === 0) {
+                        break;
+                    }
+                    $pos += $subLen;
+                }
+            } elseif ($block === 0x2C) { // Image Descriptor = one frame
+                $frames++;
+                if ($frames > 1) {
+                    return true;
+                }
+                if ($pos + 10 > $len) {
+                    break;
+                }
+                $imgFlags = ord($data[$pos + 9]);
+                $pos += 10;
+                if (($imgFlags & 0x80) !== 0) {
+                    $pos += 3 * (2 ** (($imgFlags & 0x07) + 1));
+                }
+                if ($pos >= $len) {
+                    break;
+                }
+                $pos++; // LZW minimum code size
+                while ($pos < $len) {
+                    $subLen = ord($data[$pos]);
+                    $pos++;
+                    if ($subLen === 0) {
+                        break;
+                    }
+                    $pos += $subLen;
+                }
+            } else { // 0x3B trailer or unknown byte: stop parsing safely
+                break;
+            }
+        }
+        return $frames > 1;
+    }
+
+    /**
+     * ذخیره GIF متحرک با حفظ کامل انیمیشن؛ در صورت وجود Imagick باز اندازه‌گذاری و بهینه‌سازی لایه‌ها،
+     * در غیر این صورت ذخیره امن فایل اصلی معتبرشده. مسیر یکسان در هر سه ستون ثبت می‌شود.
+     */
+    private static function storeAnimatedGif(string $tmpPath, int $origWidth, int $origHeight, int $actualSize, string $altText): array
+    {
+        $subDir = date('Y/m');
+        $base = defined('BASE_PATH') ? BASE_PATH : dirname(__DIR__, 2);
+        $uploadDir = $base . '/public_html/uploads/' . $subDir;
+        if (!is_dir($uploadDir) && !@mkdir($uploadDir, 0755, true) && !is_dir($uploadDir)) {
+            throw new MediaUploadException('امکان ساخت پوشه آپلود وجود ندارد. دسترسی پوشه را بررسی کنید.');
+        }
+
+        $token = bin2hex(random_bytes(8));
+        $relPath = "/uploads/{$subDir}/img_{$token}_anim.gif";
+        $absPath = $base . '/public_html' . $relPath;
+        $optimized = false;
+        $finalWidth = $origWidth;
+        $finalHeight = $origHeight;
+
+        if (class_exists(\Imagick::class)) {
+            try {
+                $imagick = new \Imagick($tmpPath);
+                $coalesced = $imagick->coalesceImages();
+                if ($coalesced instanceof \Imagick && $coalesced->getNumberImages() > 1) {
+                    $maxWidth = min(1200, max(self::TARGET_WIDTHS));
+                    if ($origWidth > $maxWidth) {
+                        $newW = $maxWidth;
+                        $newH = max(1, (int) round($origHeight * ($maxWidth / $origWidth)));
+                        foreach ($coalesced as $frame) {
+                            $frame->resizeImage($newW, $newH, \Imagick::FILTER_TRIANGLE, 1, false);
+                        }
+                        $finalWidth = $newW;
+                        $finalHeight = $newH;
+                    }
+                    $coalesced->optimizeImageLayers();
+                    if ($coalesced->writeImages($absPath, true)) {
+                        clearstatcache(true, $absPath);
+                        $check = @getimagesize($absPath);
+                        if (is_array($check) && ($check['mime'] ?? '') === 'image/gif' && self::isAnimatedGif($absPath)) {
+                            $optimized = true;
+                        }
+                    }
+                }
+                if (isset($coalesced) && $coalesced instanceof \Imagick) {
+                    $coalesced->destroy();
+                }
+                $imagick->destroy();
+            } catch (Throwable) {
+                $optimized = false;
+            }
+            if (!$optimized) {
+                @unlink($absPath);
+            }
+        }
+
+        if (!$optimized) {
+            $in = @fopen($tmpPath, 'rb');
+            $out = @fopen($absPath, 'xb');
+            if (!$in || !$out) {
+                if (is_resource($in)) @fclose($in);
+                if (is_resource($out)) @fclose($out);
+                throw new MediaUploadException('امکان ذخیره تصویر وجود ندارد. فضای دیسک و دسترسی پوشه را بررسی کنید.');
+            }
+            $copied = @stream_copy_to_stream($in, $out);
+            @fclose($in);
+            @fclose($out);
+            if ($copied === false || $copied <= 0) {
+                @unlink($absPath);
+                throw new MediaUploadException('ذخیره تصویر GIF کامل نشد. فضای دیسک و دسترسی پوشه را بررسی کنید.');
+            }
+        }
+
+        @chmod($absPath, 0644);
+        clearstatcache(true, $absPath);
+        $outInfo = @getimagesize($absPath);
+        if (!is_array($outInfo) || ($outInfo['mime'] ?? '') !== 'image/gif' || !self::isAnimatedGif($absPath)) {
+            @unlink($absPath);
+            throw new MediaUploadException('فایل GIF ذخیره‌شده معتبر نیست یا انیمیشن آن حفظ نشده است؛ ذخیره تصویر متوقف شد.');
+        }
+        $outSize = (int) @filesize($absPath);
+        if ($outSize <= 0) {
+            @unlink($absPath);
+            throw new MediaUploadException('فایل GIF ذخیره‌شده خالی است؛ ذخیره تصویر متوقف شد.');
+        }
+        $finalWidth = (int) $outInfo[0];
+        $finalHeight = (int) $outInfo[1];
+
+        $pdo = null;
+        $transactionOwned = false;
+        $commitAttempted = false;
+        try {
+            $pdo = DB::connection();
+            if ($pdo->inTransaction() || !$pdo->beginTransaction()) {
+                throw new MediaUploadException('ثبت تصویر در پایگاه داده آماده نیست.');
+            }
+            $transactionOwned = true;
+            DB::query(
+                "INSERT INTO media (file_path_480, file_path_800, file_path_1200, mime_type, width, height, size_bytes, alt_text, created_at)
+                 VALUES (:p, :p, :p, 'image/gif', :w, :h, :sz, :alt, NOW())",
+                [
+                    'p' => $relPath,
+                    'w' => $finalWidth,
+                    'h' => $finalHeight,
+                    'sz' => $outSize,
+                    'alt' => $altText,
+                ]
+            );
+            $mediaId = (int) DB::lastInsertId();
+            if ($mediaId <= 0) {
+                throw new MediaUploadException('ثبت تصویر در پایگاه داده کامل نشد.');
+            }
+            $commitAttempted = true;
+            if (!$pdo->commit()) {
+                throw new MediaUploadException('نتیجه ثبت تصویر نامشخص است؛ پیش از تلاش دوباره وضعیت را بررسی کنید.');
+            }
+            $transactionOwned = false;
+        } catch (Throwable $error) {
+            $safeToRemove = !$commitAttempted;
+            if ($transactionOwned && $pdo instanceof PDO) {
+                try {
+                    if ($pdo->inTransaction()) {
+                        $rolledBack = $pdo->rollBack();
+                        if (!$commitAttempted) {
+                            $safeToRemove = $rolledBack;
+                        }
+                    }
+                } catch (Throwable) {
+                    $safeToRemove = false;
+                }
+            }
+            if ($safeToRemove) {
+                @unlink($absPath);
+            }
+            if ($commitAttempted) {
+                throw new MediaUploadException('نتیجه ثبت تصویر نامشخص است؛ پیش از تلاش دوباره وضعیت رسانه را بررسی کنید.', 0, $error);
+            }
+            if (!$safeToRemove) {
+                throw new MediaUploadException('لغو ثبت تصویر نامشخص است؛ فایل حفظ شد و باید پیش از تلاش دوباره بررسی شود.', 0, $error);
+            }
+            if ($error instanceof MediaUploadException) {
+                throw $error;
+            }
+            throw new MediaUploadException('امکان ذخیره تصویر وجود ندارد؛ وضعیت سرور و پایگاه داده را بررسی کنید.', 0, $error);
+        }
+
+        return [
+            'id' => $mediaId,
+            'file_path_480' => $relPath,
+            'file_path_800' => $relPath,
+            'file_path_1200' => $relPath,
+            'url_480' => $relPath,
+            'url_800' => $relPath,
+            'url_1200' => $relPath,
+            'mime_type' => 'image/gif',
+            'width' => $finalWidth,
+            'height' => $finalHeight,
+            'size_bytes' => $outSize,
+            'alt_text' => $altText,
+            'source_mime_type' => 'image/gif',
+            'original_bytes' => $actualSize,
+            'webp_1200_bytes' => $outSize,
+            'webp_total_bytes' => $outSize,
+            'animated_gif' => true,
+            'gif_optimized' => $optimized,
+            'host_dir' => 'public_html/uploads/' . $subDir,
+        ];
+    }
+
+    /**
      * حذف امن یک یا چند تصویر از دیتابیس و حذف فیزیکی فایل‌های WebP آن‌ها از هاست
      *
      * @param int[] $mediaIds
      * @return array<string, mixed>
      */
-    public static function deleteMediaItems(array $mediaIds, bool $detachUsages = false): array
+    public static function deleteMediaItems(array $mediaIds, bool $detachUsages = false, bool $force = false): array
     {
         $ids = array_values(array_unique(array_filter(
             array_map(static fn($v): int => (int) $v, $mediaIds),
@@ -577,6 +844,7 @@ final class MediaService
 
         $blocked = [];
         $deletableRows = [];
+        $forceDetachBannerIds = [];
 
         foreach ($rows as $row) {
             $id = (int) $row['id'];
@@ -588,12 +856,17 @@ final class MediaService
                     static fn(array $u): bool => $u['type'] === 'advertising_banner'
                 ));
                 if ($bannerUsages) {
-                    $blocked[] = [
-                        'id' => $id,
-                        'reason' => 'این تصویر به بنر تبلیغاتی متصل است؛ ابتدا تصویر بنر را تغییر دهید یا بنر را حذف کنید.',
-                        'usages' => $usages,
-                    ];
-                    continue;
+                    if (!$force) {
+                        $blocked[] = [
+                            'id' => $id,
+                            'reason' => 'این تصویر به بنر تبلیغاتی متصل است؛ ابتدا تصویر بنر را تغییر دهید یا بنر را حذف کنید (یا از حذف کامل اجباری استفاده کنید).',
+                            'usages' => $usages,
+                        ];
+                        continue;
+                    }
+                    foreach ($bannerUsages as $bu) {
+                        $forceDetachBannerIds[] = (int) ($bu['entity_id'] ?? 0);
+                    }
                 }
                 if (!$detachUsages) {
                     $blocked[] = [
@@ -614,6 +887,7 @@ final class MediaService
                 'deleted_count' => 0,
                 'deleted_files_count' => 0,
                 'freed_bytes' => 0,
+                'detached_banners' => 0,
                 'blocked' => $blocked,
             ];
         }
@@ -625,8 +899,10 @@ final class MediaService
         }
 
         $hasArticleExtras = self::tableExists('article_extras');
+        $hasBanners = self::tableExists('advertising_banners');
         $deletedIds = [];
         $filesToUnlink = [];
+        $detachedBanners = 0;
 
         try {
             foreach ($deletableRows as $row) {
@@ -636,6 +912,12 @@ final class MediaService
                     DB::query('DELETE FROM business_photos WHERE media_id = :id', ['id' => $id]);
                     if ($hasArticleExtras) {
                         DB::query('UPDATE article_extras SET cover_media_id = NULL WHERE cover_media_id = :id', ['id' => $id]);
+                    }
+                    if ($force && $hasBanners) {
+                        $detachedBanners += DB::query(
+                            'UPDATE advertising_banners SET media_id = NULL, active = 0, updated_at = NOW() WHERE media_id = :id',
+                            ['id' => $id]
+                        )->rowCount();
                     }
                 }
 
@@ -675,6 +957,7 @@ final class MediaService
             'deleted_count' => count($deletedIds),
             'deleted_files_count' => $deletedFilesCount,
             'freed_bytes' => $freedBytes,
+            'detached_banners' => $detachedBanners,
             'blocked' => $blocked,
         ];
     }
@@ -949,7 +1232,8 @@ final class MediaService
                 }
                 $bytes = (int) $fileInfo->getSize();
                 $totalBytes += $bytes;
-                if (str_ends_with(strtolower($name), '.webp')) {
+                $lowerName = strtolower($name);
+                if (str_ends_with($lowerName, '.webp') || str_ends_with($lowerName, '.gif')) {
                     $webpFiles++;
                 } else {
                     $nonWebpFiles++;

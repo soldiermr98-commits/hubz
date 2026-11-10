@@ -12,6 +12,7 @@ use App\Core\Response;
 use App\Services\AdvertisingService;
 use App\Services\AdminMailService;
 use App\Services\AdvertisingReportingService;
+use App\Services\MediaLibraryService;
 use App\Services\Normalizer;
 use DateTimeImmutable;
 use Throwable;
@@ -104,13 +105,20 @@ final class AdvertisingController
     {
         Auth::requireRole(['admin']); Csrf::verifyOrFail($request); self::requireSchema();
         $id = (int)$request->input('id', 0);
+        $deleteMedia = !empty($request->input('delete_media'));
         $pdo = DB::connection();
         $pdo->beginTransaction();
         try {
+            $banner = DB::fetchOne('SELECT id, media_id FROM advertising_banners WHERE id=:id AND version=:version', ['id'=>$id,'version'=>(int)$request->input('version', 0)]);
+            if (!$banner) {
+                $pdo->rollBack();
+                Response::json(['ok' => false, 'error' => 'بنر تغییر کرده یا یافت نشد؛ فهرست را تازه‌سازی کنید.'], 409);
+            }
+            $mediaId = (int)($banner['media_id'] ?? 0);
             $deleted = DB::query('DELETE FROM advertising_banners WHERE id=:id AND version=:version', ['id'=>$id,'version'=>(int)$request->input('version', 0)])->rowCount();
             if ($deleted !== 1) {
                 $pdo->rollBack();
-                Response::json(['ok'=>false, 'error'=>'بنر تغییر کرده یا یافت نشد؛ فهرست را تازه‌سازی کنید.'], 409);
+                Response::json(['ok' => false, 'error' => 'بنر تغییر کرده یا یافت نشد؛ فهرست را تازه‌سازی کنید.'], 409);
             }
             if (AdvertisingReportingService::schemaReady()) DB::query('DELETE FROM advertising_banner_daily WHERE banner_id=:id', ['id'=>$id]);
             $pdo->commit();
@@ -118,7 +126,31 @@ final class AdvertisingController
             if ($pdo->inTransaction()) $pdo->rollBack();
             throw $e;
         }
-        Cache::flushAll(); Response::json(['ok'=>true, 'message'=>'بنر و آمار آن حذف شد. تصویر رسانه و قراردادهای قبلی حذف نشده‌اند.']);
+        Cache::flushAll();
+        $mediaNote = ' تصویر رسانه و قراردادهای قبلی حذف نشده‌اند.';
+        $mediaResult = null;
+        if ($deleteMedia && $mediaId > 0) {
+            try {
+                // The banner is already deleted, so its usage no longer blocks the
+                // media item; force also detaches any other banner still using it.
+                $mediaResult = MediaLibraryService::deleteMediaItems([$mediaId], true, true);
+                if (($mediaResult['deleted_count'] ?? 0) > 0) {
+                    $mediaNote = sprintf(
+                        ' تصویر بنر نیز به‌طور کامل حذف شد (%d فایل از هاست و %d رکورد از دیتابیس؛ %s فضای دیسک آزاد شد) و هیچ اثری از آن باقی نماند.',
+                        (int)($mediaResult['deleted_files_count'] ?? 0),
+                        (int)($mediaResult['deleted_count'] ?? 0),
+                        AdvertisingService::formatBytesFa((int)($mediaResult['freed_bytes'] ?? 0))
+                    );
+                    Cache::flushAll();
+                } else {
+                    $mediaNote = ' حذف کامل تصویر انجام نشد؛ این تصویر احتمالاً در بنر یا بخش دیگری استفاده شده است (از کتابخانه رسانه با گزینه حذف کامل اجباری حذف کنید).';
+                }
+            } catch (Throwable $e) {
+                error_log('Optional media cleanup after banner delete failed: ' . $e->getMessage());
+                $mediaNote = ' حذف کامل تصویر بنر با خطا مواجه شد؛ از کتابخانه رسانه حذفش کنید.';
+            }
+        }
+        Response::json(['ok'=>true, 'message'=>'بنر و آمار آن حذف شد.' . $mediaNote, 'media_cleanup'=>$mediaResult]);
     }
 
     /** Public best-effort aggregate; intentionally no personal data or per-event log. */
