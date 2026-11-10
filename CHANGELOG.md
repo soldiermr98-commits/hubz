@@ -2,6 +2,26 @@
 
 تمام تغییرات مرحله‌به‌مرحله این پروژه در این فایل ثبت می‌شوند.
 
+## [به‌روزرسانی GIF متحرک و حذف کامل رسانه] — ۱۴۰۵/۰۸/۱۹ (2026-11-10)
+### اضافه‌شده
+- **پشتیبانی کامل GIF متحرک در آپلود تصاویر (مخصوصاً بنر تبلیغات)** (`app/Services/MediaService.php`):
+  - تشخیص باینری GIF چندفریمی بدون نیاز به Imagick (`isAnimatedGif`)؛ GIF متحرک دیگر فریم اولش به WebP ثابت تبدیل نمی‌شود و انیمیشن کامل حفظ می‌شود.
+  - ذخیره بهینه با Imagick (بازاندازه‌گذاری حداکثر ۱۲۰۰px + `optimizeImageLayers`) و در نبود Imagick ذخیره امن فایل اصلی معتبرشده (`storeAnimatedGif`).
+  - GIF ثابت (تک‌فریم) مثل قبل به WebP سه‌سایز تبدیل می‌شود؛ سایر فرمت‌ها بدون تغییر.
+- **حذف کامل تصاویر بدون هیچ اثر باقی‌مانده** (`AdvertisingController::deleteBanner`, `MediaLibraryService::deleteMediaItems`, `MediaService::deleteMediaItems`):
+  - حذف بنر با گزینه `delete_media` → رکورد media + فایل‌های هاست + آمار بنر همگی حذف می‌شوند.
+  - فلگ `force` در حذف رسانه → جداسازی اجباری از بنرها (غیرفعال‌سازی بنر متصل) و حذف کامل فایل و رکورد.
+  - دکمه حذف تکی تصاویر متصل به بنر در کتابخانه رسانه آزاد شد.
+- **پذیرش بنر GIF در سایت عمومی**: `AdvertisingService::validImagePath` حالا مسیر `.gif` بهینه را هم می‌پذیرد.
+
+### بهبود رابط کاربری پنل
+- برچسب‌ها و پیام‌های آپلود GIF-محور شدند (`AdvertisingView`, `MediaManagerView`)؛ چک‌باکس «حذف کامل اجباری (شامل جداسازی از بنرها)» و کارت خلاصه فرمت‌های بهینه (WebP/GIF) به‌روزرسانی شد.
+
+### بسته نصبی
+- `release-files/gif-media-and-complete-delete/hamihub-update-gif-media-complete-delete.zip` + راهنمای `RAHNAMA-FA.md` + `SHA256SUMS.txt`؛ بدون مایگریشن SQL، افزایشی از مبنای `45a20e1`.
+
+---
+
 ## [مرحله S6 — کامل] — ۱۴۰۵/۰۸/۱۴ (2026-11-05)
 ### اضافه‌شده
 - **فرم‌های عمومی ادعای مالکیت (`claims`) و گزارش خطای اطلاعات (`reports`) با اتصال مستقیم به صندوق بازبینی (`app/Controllers/PublicSiteController.php` & `public_html/assets/js/public.js`):**
