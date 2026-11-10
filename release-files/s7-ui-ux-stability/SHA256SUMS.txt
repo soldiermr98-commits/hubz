@@ -1,4 +1,4 @@
-35aee04fa0ea9c9c49294bb60e8d67a56e98eecb27343b3e073a15a00801f986  hamihub-update-s7-ui-ux-stability.zip
+5dbbd272536360d53fd11e30be288588212b0b56bd72ade3e27cccb44a584ae3  hamihub-update-s7-ui-ux-stability.zip
 950d304a46229789fff83ab4cb0652677ebff1b4023e9dbabe9928042d0db43b  app/Core/DB.php
 e814fdfe77bae7b266e9d9fa6e7061d150e8dae41db02f2b6ab302d832027ff5  app/Controllers/PublicSiteController.php
 b9122939ba3b1f6e92a747cf32b75e85e4a4143e1c7de9a3cbe47017dc5e7edb  app/Controllers/ReviewQueueController.php
@@ -9,4 +9,4 @@ bae236a9dc87c88d69c6611c259e2bb15ec314e27dc2f188a2f3998ec97dd7f6  public_html/ad
 a8779b23b281d9fe10de6014810fbd7250ca89a4e247f733fc3b2be3f91f0d33  public_html/admin/assets/admin.js
 e5c3fbd8c98a569a5b06c4f3638223c176166454e60e9350afe824da51098132  public_html/admin/assets/admin.css
 abac0bef40948e3a877bf92512024786cb8fd5198b3aaf1f4cf5c7d9f704364e  CHANGELOG.md
-4498927a1c9d88b03df7b5e53cf95b67cceef25af456d9114c2a580f4deb7df8  release-files/s7-ui-ux-stability/RAHNAMA-FA.md
+7d3d5f2aa028d5af7a16038fd7929c120c691a5263d06c4091f04633ca6c0702  release-files/s7-ui-ux-stability/RAHNAMA-FA.md
