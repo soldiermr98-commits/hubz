@@ -152,18 +152,41 @@ final class AnalyticsService
         $to = $range['to'];
         $params = ['from' => $from, 'to' => $to];
 
-        $series = DB::fetchAll(
-            'SELECT day,
-                    SUM(views) AS views, SUM(unique_visitors) AS uniques,
-                    SUM(clicks_call) AS call, SUM(clicks_map) AS map,
-                    SUM(clicks_website) AS website, SUM(clicks_instagram) AS instagram,
-                    SUM(clicks_whatsapp) AS whatsapp, SUM(clicks_banner) AS banner,
-                    SUM(searches) AS searches
-             FROM analytics_daily
-             WHERE day BETWEEN :from AND :to
-             GROUP BY day ORDER BY day',
-            $params
-        );
+        $typeFilter = is_string($filters['target_type'] ?? null) ? $filters['target_type'] : '';
+        $types = in_array($typeFilter, self::TARGET_TYPES, true) ? [$typeFilter] : self::TARGET_TYPES;
+
+        $series = [];
+        $warnings = [];
+
+        // S21: اگر جدول‌های آمار ساخته نشده باشند (مثلاً مایگریشن ۰۱۳ اجرا نشده)،
+        // داشبورد به‌جای خطای ۵۰۰ با دادهٔ صفر و فهرست جدول‌های ناموجود پاسخ می‌دهد.
+        $missing = self::missingTables(['analytics_daily']);
+        if ($missing !== []) {
+            return [
+                'from' => $from, 'to' => $to,
+                'series' => [], 'totals' => self::zeroTotals(), 'tops' => self::emptyTops($types),
+                'available_types' => self::TARGET_TYPES,
+                'schema_missing' => $missing,
+                'warnings' => ['جدول‌های آمار هنوز ساخته نشده‌اند: ' . implode('، ', $missing) . ' — از دکمهٔ «بررسی دیتابیس» در همین صفحه استفاده کنید.'],
+            ];
+        }
+
+        try {
+            $series = DB::fetchAll(
+                'SELECT day,
+                        SUM(views) AS views, SUM(unique_visitors) AS uniques,
+                        SUM(clicks_call) AS call, SUM(clicks_map) AS map,
+                        SUM(clicks_website) AS website, SUM(clicks_instagram) AS instagram,
+                        SUM(clicks_whatsapp) AS whatsapp, SUM(clicks_banner) AS banner,
+                        SUM(searches) AS searches
+                 FROM analytics_daily
+                 WHERE day BETWEEN :from AND :to
+                 GROUP BY day ORDER BY day',
+                $params
+            );
+        } catch (Throwable $e) {
+            $warnings[] = 'خواندن روند روزانه ناموفق بود: ' . self::safeError($e);
+        }
 
         $totals = ['views' => 0, 'uniques' => 0, 'call' => 0, 'map' => 0, 'website' => 0, 'instagram' => 0, 'whatsapp' => 0, 'banner' => 0, 'searches' => 0];
         foreach ($series as $row) {
@@ -172,24 +195,170 @@ final class AnalyticsService
             }
         }
 
-        $typeFilter = is_string($filters['target_type'] ?? null) ? $filters['target_type'] : '';
-        $types = in_array($typeFilter, self::TARGET_TYPES, true) ? [$typeFilter] : self::TARGET_TYPES;
         $tops = [];
         foreach ($types as $type) {
-            $tops[$type] = self::topTargets($type, $from, $to, (int) ($filters['target_id'] ?? 0), 25);
+            try {
+                $tops[$type] = self::topTargets($type, $from, $to, (int) ($filters['target_id'] ?? 0), 25);
+            } catch (Throwable $e) {
+                // S21: خطای join یک نوع هدف (مثلاً نبودن جدول بنر) کل داشبورد را نمی‌شکند.
+                $tops[$type] = [];
+                $warnings[] = 'خواندن برترین‌های «' . $type . '» ناموفق بود: ' . self::safeError($e);
+            }
         }
 
-        return [
+        $result = [
             'from' => $from, 'to' => $to,
             'series' => $series, 'totals' => $totals, 'tops' => $tops,
             'available_types' => self::TARGET_TYPES,
         ];
+        if ($warnings !== []) $result['warnings'] = $warnings;
+        return $result;
     }
 
-    /** برترین‌های یک نوع هدف در بازه، با عنوان واقعی از جدول مربوطه. */
+    /** @param array<int, string> $tables */
+    private static function missingTables(array $tables): array
+    {
+        $missing = [];
+        foreach ($tables as $table) {
+            try {
+                if (!DB::tableExists($table)) $missing[] = $table;
+            } catch (Throwable) {
+                $missing[] = $table;
+            }
+        }
+        return $missing;
+    }
+
+    private static function zeroTotals(): array
+    {
+        return ['views' => 0, 'uniques' => 0, 'call' => 0, 'map' => 0, 'website' => 0, 'instagram' => 0, 'whatsapp' => 0, 'banner' => 0, 'searches' => 0];
+    }
+
+    /** @param array<int, string> $types */
+    private static function emptyTops(array $types): array
+    {
+        $tops = [];
+        foreach ($types as $type) $tops[$type] = [];
+        return $tops;
+    }
+
+    /** پیام خطای کوتاه و بدون دادهٔ حساس برای نمایش به مدیر در پنل. */
+    private static function safeError(Throwable $e): string
+    {
+        $msg = trim((string) $e->getMessage());
+        if ($msg === '') return get_class($e);
+        return mb_substr($msg, 0, 240);
+    }
+
+    // ---------------------------------------------------------------- بررسی سلامت دیتابیس (S21)
+
+    /**
+     * بررسی کامل پیش‌نیازهای آمار برای صفحهٔ «بررسی دیتابیس» پنل مدیریت:
+     * وجود جدول‌ها، نسخهٔ سرور، حالت SQL و آزمایش واقعی هر کوئری داشبورد.
+     * فقط برای مدیر ارشد فراخوانی می‌شود و هیچ دادهٔ کاربری در خروجی نیست.
+     *
+     * @return array<string, mixed>
+     */
+    public static function diagnose(): array
+    {
+        $report = [
+            'ok' => false,
+            'server' => ['version' => '', 'sql_mode' => ''],
+            'tables' => [],       // [name => exists(bool)]
+            'missing_tables' => [],
+            'queries' => [],      // [label => ['ok'=>bool,'error'=>?string,'rows'=>int]]
+            'row_counts' => [],
+            'problems' => [],
+            'recommendation' => '',
+        ];
+
+        try {
+            $v = DB::fetchOne('SELECT VERSION() AS v');
+            $report['server']['version'] = (string) ($v['v'] ?? '');
+        } catch (Throwable $e) {
+            $report['problems'][] = 'اتصال به دیتابیس برقرار نشد: ' . self::safeError($e);
+            return $report;
+        }
+        try {
+            $m = DB::fetchOne('SELECT @@sql_mode AS m');
+            $report['server']['sql_mode'] = (string) ($m['m'] ?? '');
+        } catch (Throwable) {
+            $report['server']['sql_mode'] = '';
+        }
+
+        $tables = [
+            'analytics_daily', 'analytics_events', 'analytics_visitor_days',
+            'businesses', 'articles', 'cities', 'categories', 'advertising_banners',
+        ];
+        foreach ($tables as $table) {
+            $exists = false;
+            try {
+                $exists = DB::tableExists($table);
+            } catch (Throwable) {
+                $exists = false;
+            }
+            $report['tables'][$table] = $exists;
+            if (!$exists) $report['missing_tables'][] = $table;
+        }
+        if ($report['missing_tables'] !== []) {
+            $report['problems'][] = 'این جدول‌ها وجود ندارند: ' . implode('، ', $report['missing_tables']);
+        }
+
+        // آزمایش واقعی همان کوئری‌های داشبورد — دقیقاً مشخص می‌شود کدام بخش خطا می‌دهد.
+        $from = date('Y-m-d', strtotime('-6 days'));
+        $to = date('Y-m-d');
+        if (!in_array('analytics_daily', $report['missing_tables'], true)) {
+            $label = 'سری روزانه (analytics_daily)';
+            try {
+                $rows = DB::fetchAll(
+                    'SELECT day, SUM(views) AS views FROM analytics_daily WHERE day BETWEEN :from AND :to GROUP BY day ORDER BY day LIMIT 10',
+                    ['from' => $from, 'to' => $to]
+                );
+                $report['queries'][$label] = ['ok' => true, 'error' => null, 'rows' => count($rows)];
+            } catch (Throwable $e) {
+                $report['queries'][$label] = ['ok' => false, 'error' => self::safeError($e), 'rows' => 0];
+                $report['problems'][] = $label . ' خطا داد: ' . self::safeError($e);
+            }
+            try {
+                $c = DB::fetchOne('SELECT COUNT(*) AS c FROM analytics_daily');
+                $report['row_counts']['analytics_daily'] = (int) ($c['c'] ?? 0);
+            } catch (Throwable) {
+                $report['row_counts']['analytics_daily'] = -1;
+            }
+        }
+
+        foreach (self::TARGET_TYPES as $type) {
+            $baseTable = ['business' => 'businesses', 'article' => 'articles', 'city' => 'cities', 'category' => 'categories', 'banner' => 'advertising_banners'][$type];
+            if (in_array($baseTable, $report['missing_tables'], true)) continue;
+            $label = 'برترین‌ها: ' . $type;
+            try {
+                $rows = self::topTargets($type, $from, $to, 0, 1);
+                $report['queries'][$label] = ['ok' => true, 'error' => null, 'rows' => count($rows)];
+            } catch (Throwable $e) {
+                $report['queries'][$label] = ['ok' => false, 'error' => self::safeError($e), 'rows' => 0];
+                $report['problems'][] = $label . ' خطا داد: ' . self::safeError($e);
+            }
+        }
+
+        if ($report['missing_tables'] !== []) {
+            $report['recommendation'] = 'از بخش به‌روزرسانی دیتابیس در پنل (یا دکمهٔ «اجرای مایگریشن‌ها») استفاده کنید تا جدول‌های ساخته نشده ساخته شوند؛ مایگریشن مربوطه: 013_analytics_and_ai_logs.sql';
+        } elseif ($report['problems'] === []) {
+            $report['recommendation'] = 'همهٔ بررسی‌ها موفق بود؛ ساختار دیتابیس برای آمار سالم است.';
+        } else {
+            $report['recommendation'] = 'جزئیات خطای هر کوئری در همین صفحه نمایش داده شده است؛ آن متن را برای رفع اشکال ارسال کنید.';
+        }
+
+        $report['ok'] = $report['missing_tables'] === [] && $report['problems'] === [];
+        return $report;
+    }
+
+    /** برترین‌های یک نوع هدف در بازه، با عنوان واقعی از جدول مربوطه.
+     * S21: سازگار با ONLY_FULL_GROUP_BY — ستون عنوان JOIN‌شده هم صریحاً در GROUP BY می‌آید
+     * (MariaDB تشخیص وابستگی تابعی MySQL را ندارد و در این حالت خطای ۱۰۵۵ می‌دهد).
+     */
     private static function topTargets(string $type, string $from, string $to, int $onlyId, int $limit): array
     {
-        [$join, $titleExpr] = self::joinFor($type);
+        [$join, $titleExpr, $titleColumn] = self::joinFor($type);
         $sql = "SELECT d.target_id AS id, {$titleExpr} AS title,
                        SUM(d.views) AS views, SUM(d.unique_visitors) AS uniques,
                        SUM(d.clicks_call) AS call, SUM(d.clicks_map) AS map,
@@ -203,20 +372,20 @@ final class AnalyticsService
             $sql .= ' AND d.target_id = :only';
             $params['only'] = $onlyId;
         }
-        $sql .= " GROUP BY d.target_id ORDER BY views DESC, uniques DESC LIMIT {$limit}";
+        $sql .= " GROUP BY d.target_id, {$titleColumn} ORDER BY views DESC, uniques DESC LIMIT {$limit}";
         return DB::fetchAll($sql, $params);
     }
 
-    /** JOIN و عبارت عنوان هر نوع هدف؛ همهٔ JOINها روی PK جدول اصلی هستند. */
+    /** JOIN و عبارت عنوان هر نوع هدف؛ همهٔ JOINها روی PK جدول اصلی هستند. سومین خروجی ستون GROUP BY عنوان است. */
     private static function joinFor(string $type): array
     {
         return match ($type) {
-            'business' => ['LEFT JOIN businesses b ON b.id = d.target_id', "COALESCE(b.name, CONCAT('#', d.target_id))"],
-            'article' => ['LEFT JOIN articles a ON a.id = d.target_id', "COALESCE(a.title, CONCAT('#', d.target_id))"],
-            'city' => ['LEFT JOIN cities c ON c.id = d.target_id', "COALESCE(c.name_fa, CONCAT('#', d.target_id))"],
-            'category' => ['LEFT JOIN categories k ON k.id = d.target_id', "COALESCE(k.name_fa, CONCAT('#', d.target_id))"],
-            'banner' => ['LEFT JOIN advertising_banners bt ON bt.id = d.target_id', "COALESCE(bt.title, CONCAT('#', d.target_id))"],
-            default => ['', "CONCAT('#', d.target_id)"],
+            'business' => ['LEFT JOIN businesses b ON b.id = d.target_id', "COALESCE(b.name, CONCAT('#', d.target_id))", 'b.name'],
+            'article' => ['LEFT JOIN articles a ON a.id = d.target_id', "COALESCE(a.title, CONCAT('#', d.target_id))", 'a.title'],
+            'city' => ['LEFT JOIN cities c ON c.id = d.target_id', "COALESCE(c.name_fa, CONCAT('#', d.target_id))", 'c.name_fa'],
+            'category' => ['LEFT JOIN categories k ON k.id = d.target_id', "COALESCE(k.name_fa, CONCAT('#', d.target_id))", 'k.name_fa'],
+            'banner' => ['LEFT JOIN advertising_banners bt ON bt.id = d.target_id', "COALESCE(bt.title, CONCAT('#', d.target_id))", 'bt.title'],
+            default => ['', "CONCAT('#', d.target_id)", 'd.target_id'],
         };
     }
 
@@ -273,7 +442,12 @@ final class AnalyticsService
         $types = in_array($typeFilter, self::TARGET_TYPES, true) ? [$typeFilter] : self::TARGET_TYPES;
         $rows = [];
         foreach ($types as $type) {
-            $rows = array_merge($rows, self::topTargets($type, $range['from'], $range['to'], (int) ($filters['target_id'] ?? 0), 20000));
+            try {
+                $rows = array_merge($rows, self::topTargets($type, $range['from'], $range['to'], (int) ($filters['target_id'] ?? 0), 20000));
+            } catch (Throwable $e) {
+                // S21: خطای یک نوع هدف خروجی اکسل را کامل نمی‌کند؛ همان نوع خالی می‌ماند.
+                error_log('Analytics aggregateRows failed for type ' . $type . ': ' . $e->getMessage());
+            }
         }
         return ['from' => $range['from'], 'to' => $range['to'], 'rows' => $rows];
     }

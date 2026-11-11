@@ -12,6 +12,7 @@ use Throwable;
 final class AdminMailService
 {
     private const KEY = 'admin_mail_v1';
+    private const NOTIFY_STATE_KEY = 'admin_mail_notify_state';
 
     private static function state(): array
     {
@@ -31,7 +32,37 @@ final class AdminMailService
             'host'=>$s['host'] ?? '', 'port'=>(int)($s['port'] ?? 587),
             'security'=>$s['security'] ?? 'tls', 'username'=>$s['username'] ?? '',
             'password_configured'=>is_array($s['secret'] ?? null), 'version'=>(int)($s['version'] ?? 0),
+            // S21: آخرین نتیجهٔ اعلان‌های خودکار (ثبت فرم عمومی) برای عیب‌یابی از داخل پنل
+            'notify_state'=>self::notifyState(),
         ];
+    }
+
+    /** آخرین نتیجهٔ اعلان خودکار؛ هرگز شکست ثبت رکورد یا ارسال ایمیل را منع نمی‌کند. */
+    private static function notifyState(): array
+    {
+        try {
+            $row = DB::fetchOne('SELECT v FROM settings WHERE k=:k', ['k'=>self::NOTIFY_STATE_KEY]);
+            $state = json_decode((string)($row['v'] ?? ''), true);
+            return is_array($state) ? $state : [];
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    private static function rememberNotify(string $event, string $result, string $note = ''): void
+    {
+        try {
+            $state = json_encode([
+                'event'=>$event, 'result'=>$result, 'note'=>$note, 'at'=>date('Y-m-d H:i:s'),
+            ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+            DB::query(
+                'INSERT INTO settings (k, v, updated_at) VALUES (:k, :v, NOW())
+                 ON DUPLICATE KEY UPDATE v = VALUES(v), updated_at = NOW()',
+                ['k'=>self::NOTIFY_STATE_KEY, 'v'=>$state]
+            );
+        } catch (Throwable) {
+            // ثبت وضعیت اعلان فقط برای عیب‌یابی است؛ هیچ‌گاه نباید مسیر اصلی را مختل کند.
+        }
     }
 
     public static function save(array $input): void
@@ -124,12 +155,16 @@ final class AdminMailService
             if (empty(self::state()['enabled'])) {
                 // S19: دلیل ردشدن بی‌صدا در لاگ سرور قابل تشخیص باشد (بدون هیچ داده حساس).
                 error_log('Admin mail notification skipped: notifications disabled in settings.');
+                // S21: وضعیت برای نمایش در پنل مدیریت (تبلیغات/دیدگاه‌ها ایمیلی نمی‌آمد و دلیل دیده نمی‌شد)
+                self::rememberNotify($event, 'skipped', 'اعلان‌ها در تنظیمات ایمیل فعال نیستند؛ دکمهٔ تست ایمیل مستقل از این کلید کار می‌کند.');
                 return;
             }
-            self::send($messages[$event][0], $messages[$event][1]);
+            $sent = self::send($messages[$event][0], $messages[$event][1]);
+            self::rememberNotify($event, $sent ? 'sent' : 'failed', $sent ? '' : 'ترابرد محلی ایمیل را نپذیرفت.');
         } catch (Throwable $e) {
             // The submitted record remains saved even if mail is unavailable. No sensitive details in logs.
             error_log('Admin mail notification failed; check mail configuration.');
+            self::rememberNotify($event, 'failed', 'ارسال ایمیل با خطا متوقف شد؛ تنظیمات SMTP یا پورت را بررسی کنید.');
         }
     }
 }

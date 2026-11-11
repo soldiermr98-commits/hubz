@@ -23,11 +23,11 @@
 
     var link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/assets/vendor/leaflet/leaflet.css?v=s20';
+    link.href = '/assets/vendor/leaflet/leaflet.css?v=s21';
     document.head.appendChild(link);
 
     var script = document.createElement('script');
-    script.src = '/assets/vendor/leaflet/leaflet.js?v=s20';
+    script.src = '/assets/vendor/leaflet/leaflet.js?v=s21';
     script.async = true;
     script.onload = function () {
       leafletLoaded = true;
@@ -224,6 +224,10 @@
     var msgEl = form.querySelector('[data-hx-form-msg]');
     var endpoint = formType === 'claim' ? '/api/v1/public/claim' :
       formType === 'advertising' ? '/api/v1/public/advertising-inquiry' : '/api/v1/public/comments';
+    // S21: متن وضعیت بدون اشاره به صندوق بازبینی؛ دیدگاه‌ها مستقیم در تب دیدگاه‌های پنل مدیریت می‌شوند
+    var sendingText = formType === 'comment' ? 'در حال ارسال دیدگاه…'
+      : formType === 'advertising' ? 'در حال ارسال درخواست…'
+      : 'در حال ارسال…';
     var fd = new FormData(form);
     var body = {};
     fd.forEach(function (val, key) {
@@ -232,7 +236,7 @@
 
     if (msgEl) {
       msgEl.style.color = '#0369a1';
-      msgEl.textContent = 'در حال ارسال به صندوق بازبینی...';
+      msgEl.textContent = sendingText;
     }
 
     var submit = form.querySelector('button[type="submit"]');

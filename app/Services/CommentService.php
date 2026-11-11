@@ -64,6 +64,9 @@ final class CommentService
 
     /**
      * ثبت دیدگاه کاربر (وضعیت pending). خروجی آرایه‌ای با ok
+     * S21: دیدگاه‌ها فقط در جدول business_comments ذخیره می‌شوند و در تب «دیدگاه‌ها»ی پنل
+     * مدیریت می‌شوند؛ دیگر ردیفی در صندوق بازبینی (review_queue) ساخته نمی‌شود.
+     *
      * @return array<string,mixed>
      */
     public static function submit(int $businessId, string $name, int $rating, string $body, string $ip): array
@@ -91,23 +94,7 @@ final class CommentService
                 'ip'     => substr($ip, 0, 64),
             ]
         );
-        $id = DB::lastInsertId();
-        DB::query(
-            "INSERT INTO review_queue (kind, target_id, reason_code, payload_json, status, created_at)
-             VALUES ('comment', :tid, 'user_comment_pending', :payload, 'pending', NOW())",
-            [
-                'tid'     => $id,
-                'payload' => json_encode([
-                    'comment_id'    => $id,
-                    'business_id'   => $businessId,
-                    'business_name' => (string)$biz['name'],
-                    'author_name'   => mb_substr($name, 0, 60),
-                    'rating'        => max(1, min(5, $rating)),
-                    'excerpt'       => mb_substr($body, 0, 160),
-                ], JSON_UNESCAPED_UNICODE),
-            ]
-        );
-        return ['ok' => true, 'id' => (int)$id];
+        return ['ok' => true, 'id' => DB::lastInsertId()];
     }
 
     /** دیدگاه‌های تاییدشده یک کسب‌وکار برای نمایش عمومی (بدون IP) */
@@ -187,6 +174,8 @@ final class CommentService
 
     /**
      * تایید / رد / حذف دیدگاه در پنل مدیریت
+     * S21: با حذف کامل ارتباط دیدگاه با صندوق بازبینی، این متد فقط business_comments را به‌روز می‌کند.
+     *
      * @return array<string,mixed>
      */
     public static function moderate(int $id, string $action): array
@@ -196,19 +185,14 @@ final class CommentService
             return ['ok' => false, 'error' => 'دیدگاه یافت نشد.'];
         }
         if ($action === 'delete') {
+            // S20/S21: حذف واقعی رکورد از دیتابیس؛ هیچ اثری از دیدگاه باقی نمی‌ماند.
             DB::query("DELETE FROM business_comments WHERE id = :id", ['id' => $id]);
-            DB::query("UPDATE review_queue SET status='resolved' WHERE kind='comment' AND target_id=:tid", ['tid' => $id]);
             return ['ok' => true, 'message' => 'دیدگاه حذف شد.'];
         }
         $newStatus = $action === 'approve' ? 'approved' : 'rejected';
         DB::query(
             "UPDATE business_comments SET status = :st, reviewed_at = NOW() WHERE id = :id",
             ['st' => $newStatus, 'id' => $id]
-        );
-        DB::query(
-            "UPDATE review_queue SET status = CASE WHEN :st = 'approved' THEN 'resolved' ELSE 'dismissed' END
-             WHERE kind = 'comment' AND target_id = :tid AND status = 'pending'",
-            ['st' => $newStatus, 'tid' => $id]
         );
         $msg = $newStatus === 'approved'
             ? 'دیدگاه تایید شد و در صفحه کسب‌وکار نمایش داده می‌شود.'

@@ -737,7 +737,7 @@ final class PublicSiteController
                             </form>
                             <div data-hx-comment-done class="hx-comment-done" hidden>
                                 <h2><?= self::icon('tick-circle') ?> دیدگاه شما ثبت شد</h2>
-                                <p>متن دیدگاه در صندوق بازبینی تحریریه است و پس از تایید، در همین صفحه با نشان «تایید حامی‌هاب» نمایش داده می‌شود.</p>
+                                <p>دیدگاه شما ثبت شد و در انتظار تایید تحریریه است؛ پس از تایید، در همین صفحه با نشان «تایید حامی‌هاب» نمایش داده می‌شود.</p>
                             </div>
                         </div>
 
@@ -1635,7 +1635,7 @@ final class PublicSiteController
                 </form>
                 <div id="hx-comment-done" class="hx-comment-done" style="display:none;">
                     <h2><?= self::icon('tick-circle') ?> دیدگاه شما ثبت شد</h2>
-                    <p>متن دیدگاه در صندوق بازبینی تحریریه است و پس از تایید، در صفحه مجموعه با نشان «تایید حامی‌هاب» نمایش داده می‌شود.</p>
+                    <p>دیدگاه شما ثبت شد و در انتظار تایید تحریریه است؛ پس از تایید، در صفحه مجموعه با نشان «تایید حامی‌هاب» نمایش داده می‌شود.</p>
                     <a class="hx-btn hx-btn-outline" href="<?= self::e($detailUrl) ?>">بازگشت به صفحه «<?= self::e($biz['name']) ?>»</a>
                 </div>
             </div>
@@ -2626,7 +2626,7 @@ final class PublicSiteController
             . '<input type="hidden" name="hx_ts" value="' . $qts . '">'
             . '<input type="hidden" name="hx_sig" value="' . $qsig . '">'
             . '<div class="hx-ad-grid">'
-            . '<label>نام و نام خانوادگی *<input name="name" required maxlength="150" autocomplete="name" placeholder="مثلاً: رضا کریمی"></label>'
+            . '<label>نام و نام خانوادگی *<input type="text" name="name" required maxlength="150" autocomplete="name" placeholder="مثلاً: رضا کریمی"></label>'
             . '<label>شماره تماس *<input name="phone" type="tel" required maxlength="32" autocomplete="tel" dir="ltr" inputmode="tel" placeholder="09xxxxxxxxx"></label>'
             . '</div>'
             . '<label>پیام شما (اختیاری)<textarea name="message" maxlength="1000" rows="4" placeholder="نوع کسب‌وکار، جایگاه مدنظر (بنر، جایگاه ویژه، معرفی اختصاصی) و بازهٔ زمانی…"></textarea></label>'
@@ -2966,7 +2966,7 @@ final class PublicSiteController
     <meta name="twitter:image" content="<?= self::e($baseUrl) ?>/assets/img/logo-hx-card.webp">
     <link rel="preload" href="/assets/fonts/Vazirmatn-Regular.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/assets/fonts/Vazirmatn-Bold.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="/assets/css/public.css?v=s20.0">
+    <link rel="stylesheet" href="/assets/css/public.css?v=s21.0">
     <!-- hhx-ad-until:<?= $adUntil ?> -->
     <!-- hhx-sponsor-until:<?= max(0, (int)($data['sponsor_until'] ?? 0)) ?> -->
     <?php foreach ($schemas as $schema):
@@ -3067,7 +3067,7 @@ final class PublicSiteController
         <?= self::icon('arrow-up', 'hx-icon') ?>
         <span class="hx-visually-hidden">بازگشت به بالا</span>
     </button>
-    <script src="/assets/js/public.js?v=s20.0" defer></script>
+    <script src="/assets/js/public.js?v=s21.0" defer></script>
 </body>
 </html>
         <?php

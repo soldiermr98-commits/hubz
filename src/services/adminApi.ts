@@ -540,7 +540,12 @@ async function request(path: string, options: RequestInit = {}): Promise<any> {
     throw new Error(`پاسخ نامعتبر از سرور (HTTP ${response.status}).`);
   }
   const data = await response.json();
-  if (!response.ok || !data.ok) throw new Error(data.error || `خطای سرور (HTTP ${response.status}).`);
+  if (!response.ok || !data.ok) {
+    const err = new Error(data.error || `خطای سرور (HTTP ${response.status}).`) as Error & { detail?: string };
+    // S21: برخی پاسخ‌های خطای سرور فیلد detail دارند (متن دقیق خطای دیتابیس برای مدیر).
+    if (typeof data.detail === 'string' && data.detail) err.detail = data.detail;
+    throw err;
+  }
   return data;
 }
 async function action(path: string, payload: unknown, csrf: string): Promise<any> {
@@ -551,7 +556,8 @@ async function action(path: string, payload: unknown, csrf: string): Promise<any
     return { ok: false, error: message, message };
   }
 }
-export interface AdminMailSettings { enabled:boolean; method:'php'|'smtp'; recipient:string; from:string; host:string; port:number; security:'tls'|'ssl'; username:string; password_configured:boolean; version:number; }
+export interface AdminMailNotifyState { event:string; result:'sent'|'failed'|'skipped'|string; note?:string; at:string }
+export interface AdminMailSettings { enabled:boolean; method:'php'|'smtp'; recipient:string; from:string; host:string; port:number; security:'tls'|'ssl'; username:string; password_configured:boolean; version:number; notify_state?:AdminMailNotifyState }
 export async function fetchAdminMail():Promise<{ok:boolean;settings:AdminMailSettings}> { return request('/api/v1/admin-mail',{cache:'no-store'}); }
 export async function saveAdminMail(payload:unknown,csrf:string):Promise<any> { return action('/api/v1/admin-mail',payload,csrf); }
 export async function testAdminMail(csrf:string):Promise<any> { return action('/api/v1/admin-mail/test',{},csrf); }
@@ -879,7 +885,9 @@ export async function runCronMaintenanceS6(csrf:string): Promise<any> { return a
 export interface AnalyticsTotals { views:number; uniques:number; call:number; map:number; website:number; instagram:number; whatsapp:number; banner:number; searches:number }
 export interface AnalyticsSeriesRow extends AnalyticsTotals { day:string }
 export interface AnalyticsTopRow { id:number; title:string; views:number; uniques:number; call:number; map:number; website:number; instagram:number; whatsapp:number; banner:number; searches:number }
-export interface AnalyticsDashboard { ok:boolean; from:string; to:string; series:AnalyticsSeriesRow[]; totals:AnalyticsTotals; tops:Record<string, AnalyticsTopRow[]>; available_types:string[] }
+export interface AnalyticsDashboard { ok:boolean; from:string; to:string; series:AnalyticsSeriesRow[]; totals:AnalyticsTotals; tops:Record<string, AnalyticsTopRow[]>; available_types:string[]; warnings?:string[]; schema_missing?:string[] }
+export interface AnalyticsDiagnoseQuery { ok:boolean; error:string|null; rows:number }
+export interface AnalyticsDiagnoseReport { ok:boolean; server:{version:string;sql_mode:string}; tables:Record<string,boolean>; missing_tables:string[]; queries:Record<string,AnalyticsDiagnoseQuery>; row_counts:Record<string,number>; problems:string[]; recommendation:string }
 export interface AnalyticsLogRow { id:number; occurred_at:string; event_type:string; target_type:string; target_id:number; target_title:string; path:string; ip_address:string; ref_source:string; ref_host:string; referrer:string; utm_source:string; utm_medium:string; utm_campaign:string; utm_term:string; device:string; browser:string; search_query:string }
 export interface AnalyticsLogFilters { from?:string; to?:string; event_type?:string; target_type?:string; target_id?:number; ref_source?:string; q?:string }
 
@@ -893,6 +901,11 @@ function analyticsQuery(params:Record<string, string|number|undefined>): URLSear
 
 export async function fetchAnalyticsDashboard(params:{days?:number}&AnalyticsLogFilters = {}):Promise<AnalyticsDashboard> {
   return request('/api/v1/analytics/dashboard?' + analyticsQuery({ days:params.days ?? 7, ...params }), { cache:'no-store' });
+}
+
+/** S21 — بررسی سلامت دیتابیس برای صفحهٔ آمار (جدول‌های ناموجود، sql_mode، آزمایش کوئری‌ها). */
+export async function fetchAnalyticsDiagnose():Promise<AnalyticsDiagnoseReport> {
+  return request('/api/v1/analytics/diagnose', { cache:'no-store' });
 }
 
 export async function fetchAnalyticsLogs(params:{page?:number;per_page?:number}&AnalyticsLogFilters = {}):Promise<{ok:boolean;items:AnalyticsLogRow[];pagination:{page:number;per_page:number;total:number;total_pages:number}}> {

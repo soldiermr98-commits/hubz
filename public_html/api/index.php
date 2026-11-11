@@ -168,6 +168,9 @@ $router->get('/api/v1/analytics/export', [AnalyticsController::class, 'export'])
 $router->get('/api/v1/analytics/settings', [AnalyticsController::class, 'settings']);
 $router->post('/api/v1/analytics/settings', [AnalyticsController::class, 'saveSettings']);
 
+// S21 — بررسی سلامت دیتابیس برای صفحهٔ آمار (فقط مدیر ارشد)
+$router->get('/api/v1/analytics/diagnose', [AnalyticsController::class, 'diagnose']);
+
 // ۷. مسیرهای مرحله S6 (ادعای مالکیت، گزارش خطا، آمار کلیک‌های روزانه و کرون ۵ دقیقه‌ای)
 $router->post('/api/v1/public/claim', [PublicSiteController::class, 'submitClaim']);
 $router->post('/api/v1/public/report', [PublicSiteController::class, 'submitReport']);

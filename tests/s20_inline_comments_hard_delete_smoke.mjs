@@ -2,7 +2,7 @@
 // ۱) صفحهٔ کسب‌وکار: فرم دیدگاه درون‌صفحه‌ای، بدون target=_blank، سوال امنیتی تازه از API
 // ۲) ستاره‌ها: data-star-value + ویجت با بازخورد عددی + پرشدن تا انتخاب با کلاس‌های JS
 // ۳) حذف کامل: مقاله (اندپوینت + سرویس تراکنشی + دکمهٔ پنل) و پاکسازی business_comments در حذف کسب‌وکار
-// ۴) روت‌ها، سایت‌مپ و نسخهٔ دارایی‌ها s20.0
+// ۴) روت‌ها، سایت‌مپ و نسخهٔ دارایی‌ها s21.0
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
@@ -102,11 +102,11 @@ const read = (p) => readFile(p, 'utf8');
   assert.ok(psc.includes('id="hx-ad-modal"'), 'مارکاپ مودال تبلیغات باقی است');
 
   const cache = await read('app/Core/Cache.php');
-  assert.ok(cache.includes('public.css?v=s20.0'), 'اعتبارسنج کش با s20.0 هم‌خوان است');
-  assert.ok(psc.includes('public.css?v=s20.0') && psc.includes('public.js?v=s20.0'), 'بارنامه دارایی‌ها s20.0 است');
+  assert.ok(cache.includes('public.css?v=s21.0'), 'اعتبارسنج کش با s21.0 هم‌خوان است');
+  assert.ok(psc.includes('public.css?v=s21.0') && psc.includes('public.js?v=s21.0'), 'بارنامه دارایی‌ها s21.0 است');
   const js = await read('public_html/assets/js/public.js');
-  assert.ok(js.includes('leaflet.css?v=s20') && js.includes('leaflet.js?v=s20'), 'لودر نقشه s20 است');
-  console.log('OK فوتر/سایت‌مپ/نسخه‌ها: لینک واقعی + حفظ پاپ‌آپ + s20.0');
+  assert.ok(js.includes('leaflet.css?v=s21') && js.includes('leaflet.js?v=s21'), 'لودر نقشه s21 است');
+  console.log('OK فوتر/سایت‌مپ/نسخه‌ها: لینک واقعی + حفظ پاپ‌آپ + s21.0');
 }
 
 console.log('\nهمه بررسی‌های S20 با موفقیت گذشت');

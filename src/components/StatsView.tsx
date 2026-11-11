@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Download, LoaderCircle, RefreshCw, Search } from 'lucide-react';
+import { Database, Download, LoaderCircle, RefreshCw, Search } from 'lucide-react';
 import {
-  AnalyticsDashboard, AnalyticsLogFilters, AnalyticsLogRow, AnalyticsTopRow,
-  analyticsExportUrl, fetchAnalyticsDashboard, fetchAnalyticsLogs,
+  AnalyticsDashboard, AnalyticsDiagnoseReport, AnalyticsLogFilters, AnalyticsLogRow, AnalyticsTopRow,
+  analyticsExportUrl, fetchAnalyticsDashboard, fetchAnalyticsDiagnose, fetchAnalyticsLogs, runWebMigrations,
 } from '../services/adminApi';
 
 const TARGET_LABELS: Record<string, string> = { business: 'کسب‌وکار', article: 'مقاله', city: 'شهر', category: 'دسته‌بندی', banner: 'بنر تبلیغاتی' };
@@ -197,21 +197,111 @@ function LogsPanel({ filters, onFiltersChange }: { filters: AnalyticsLogFilters;
   </div>;
 }
 
-export const StatsView: React.FC<{ csrfToken: string }> = ({ csrfToken: _csrf }) => {
+/** S21 — بررسی سلامت دیتابیس آمار: جدول‌های ناموجود، نسخه سرور، sql_mode و آزمایش کوئری‌ها. */
+function DbCheckPanel({ csrfToken, onFixed }: { csrfToken: string; onFixed: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [migrating, setMigrating] = useState(false);
+  const [report, setReport] = useState<AnalyticsDiagnoseReport | null>(null);
+  const [error, setError] = useState('');
+  const [migrateMsg, setMigrateMsg] = useState('');
+
+  const runCheck = useCallback(async () => {
+    setBusy(true); setError(''); setMigrateMsg('');
+    try {
+      const r = await fetchAnalyticsDiagnose();
+      setReport(r);
+      setOpen(true);
+      if (r.ok) onFixed();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'اجرای بررسی ناموفق بود.');
+    } finally { setBusy(false); }
+  }, [onFixed]);
+
+  const runMigrations = useCallback(async () => {
+    setMigrating(true); setMigrateMsg(''); setError('');
+    try {
+      const r = await runWebMigrations(csrfToken);
+      if (r?.ok) {
+        const applied = r?.migration_result?.total_applied ?? 0;
+        setMigrateMsg(applied > 0 ? `${applied.toLocaleString('fa-IR')} مایگریشن اعمال شد؛ بررسی را دوباره اجرا کنید.` : 'مایگریشن جدیدی برای اجرا نبود؛ بررسی را دوباره اجرا کنید.');
+        await runCheck();
+      } else {
+        setError(r?.error || 'اجرای مایگریشن ناموفق بود.');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'اجرای مایگریشن ناموفق بود.');
+    } finally { setMigrating(false); }
+  }, [csrfToken, runCheck]);
+
+  const missing = report?.missing_tables ?? [];
+  return <div className="relative">
+    <button type="button" className={btnGhost} onClick={() => void runCheck()} disabled={busy}>
+      {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+      بررسی دیتابیس
+    </button>
+    {open && <div className="absolute left-0 top-full z-30 mt-2 w-[min(92vw,34rem)] rounded-xl border border-slate-200 bg-white p-4 text-right shadow-xl">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-bold">وضعیت دیتابیس آمار</h3>
+        <button type="button" className="rounded px-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" onClick={() => setOpen(false)} aria-label="بستن">×</button>
+      </div>
+      {error && <p className="mt-2 rounded bg-rose-50 p-2 text-xs text-rose-800">{error}</p>}
+      {migrateMsg && <p className="mt-2 rounded bg-emerald-50 p-2 text-xs text-emerald-800">{migrateMsg}</p>}
+      {!report && <p className="mt-2 text-xs text-slate-500">گزارشی برای نمایش نیست.</p>}
+      {report && <div className="mt-2 space-y-2 text-xs">
+        <p>نسخه سرور: <span className="font-mono" dir="ltr">{report.server.version || '—'}</span></p>
+        <p>حالت SQL: <span className="font-mono" dir="ltr">{report.server.sql_mode || '—'}</span></p>
+        <div>
+          <p className="font-bold">جدول‌ها</p>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {Object.entries(report.tables).map(([t, exists]) => (
+              <span key={t} className={`rounded px-2 py-0.5 font-mono ${exists ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`} dir="ltr">{t}{exists ? ' ✓' : ' ✗'}</span>
+            ))}
+          </div>
+        </div>
+        {Object.keys(report.queries).length > 0 && <div>
+          <p className="font-bold">آزمایش کوئری‌ها</p>
+          <ul className="mt-1 space-y-1">
+            {Object.entries(report.queries).map(([label, q]) => (
+              <li key={label} className={q.ok ? 'text-emerald-800' : 'text-rose-800'}>
+                {q.ok ? '✓' : '✗'} {label}{!q.ok && q.error ? <span className="block font-mono text-[10px] text-rose-700" dir="ltr">{q.error}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>}
+        {report.problems.length > 0 && <div className="rounded bg-amber-50 p-2 text-amber-900">
+          <ul className="list-inside list-disc space-y-1">{report.problems.map((p, i) => <li key={i}>{p}</li>)}</ul>
+        </div>}
+        <p className="rounded bg-slate-50 p-2 text-slate-700">{report.recommendation}</p>
+        {missing.length > 0 && <button type="button" className={btnPrimary} onClick={() => void runMigrations()} disabled={migrating}>
+          {migrating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+          اجرای مایگریشن‌ها و ساخت جدول‌ها
+        </button>}
+      </div>}
+    </div>}
+  </div>;
+}
+
+export const StatsView: React.FC<{ csrfToken: string }> = ({ csrfToken }) => {
   const [range, setRange] = useState<Range>({ days: 7 });
   const [data, setData] = useState<AnalyticsDashboard | null>(null);
   const [topType, setTopType] = useState('business');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [errorDetail, setErrorDetail] = useState('');
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [logFilters, setLogFilters] = useState<AnalyticsLogFilters>({});
 
   const load = useCallback(async (r: Range) => {
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setErrorDetail(''); setWarnings([]);
     try {
       const d = await fetchAnalyticsDashboard(r.days ? { days: r.days } : { from: r.from, to: r.to });
       setData(d);
+      setWarnings(d.warnings ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'خطا در دریافت آمار');
+      const detail = (e as Error & { detail?: string }).detail;
+      if (detail) setErrorDetail(detail);
     } finally { setLoading(false); }
   }, []);
 
@@ -227,11 +317,23 @@ export const StatsView: React.FC<{ csrfToken: string }> = ({ csrfToken: _csrf })
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h1 className="text-xl font-bold">آمار بازدید و کلیک</h1>
         <p className="mt-1 text-xs text-slate-500">تجمیع ماندگار روزانه + لاگ جزئیات رویدادها (IP، منبع، دستگاه) — ربات‌ها فیلتر می‌شوند. بازدیدکننده یکتا بر اساس هش ناشناس روزانه است.</p></div>
-      <button type="button" className={btnPrimary} onClick={() => void load(range)} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> بازخوانی</button>
+      <div className="flex gap-2">
+        <DbCheckPanel csrfToken={csrfToken} onFixed={() => void load(range)} />
+        <button type="button" className={btnPrimary} onClick={() => void load(range)} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> بازخوانی</button>
+      </div>
     </div>
 
     <section className="rounded-xl border border-slate-200 bg-white p-4"><RangeBar range={range} onChange={setRange} /></section>
-    {error && <p role="alert" className="rounded bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
+    {error && <div role="alert" className="rounded bg-rose-50 p-3 text-sm text-rose-800">
+      <p>{error}</p>
+      {errorDetail && <p className="mt-2 break-all rounded bg-rose-100/60 p-2 font-mono text-xs text-rose-900" dir="ltr">{errorDetail}</p>}
+    </div>}
+    {warnings.length > 0 && <div className="rounded bg-amber-50 p-3 text-sm text-amber-900">
+      <p className="font-bold">هشدار: بخشی از آمار کامل خوانده نشد.</p>
+      <ul className="mt-1 list-inside list-disc space-y-1">
+        {warnings.map((w, i) => <li key={i}>{w}</li>)}
+      </ul>
+    </div>}
 
     <SummaryCards totals={data?.totals ?? null} loading={loading} />
 

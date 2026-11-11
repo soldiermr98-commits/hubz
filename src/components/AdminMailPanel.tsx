@@ -2,6 +2,12 @@ import React, {useCallback, useEffect, useState} from 'react';
 import {AdminMailSettings, fetchAdminMail, saveAdminMail, testAdminMail} from '../services/adminApi';
 
 const field='mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
+const NOTIFY_EVENT_LABELS: Record<string,string> = {advertising:'درخواست تبلیغات', report:'گزارش خطا', comment:'دیدگاه جدید'};
+const NOTIFY_RESULT: Record<string,{cls:string,label:string}> = {
+  sent:{cls:'bg-emerald-50 text-emerald-800 border-emerald-200',label:'ارسال شد'},
+  failed:{cls:'bg-rose-50 text-rose-800 border-rose-200',label:'ناموفق بود'},
+  skipped:{cls:'bg-amber-50 text-amber-900 border-amber-200',label:'انجام نشد'},
+};
 export function AdminMailPanel({csrfToken}:{csrfToken:string}) {
   const [settings,setSettings]=useState<AdminMailSettings|null>(null);
   const [password,setPassword]=useState('');
@@ -14,7 +20,13 @@ export function AdminMailPanel({csrfToken}:{csrfToken:string}) {
   const save=async(e:React.FormEvent)=>{e.preventDefault();if(!settings)return;setBusy(true);const r=await saveAdminMail({...settings,password,clear_password:clear},csrfToken);setBusy(false);setNotice({error:!r.ok,text:r.message||r.error});if(r.ok){setPassword('');setClear(false);await load();}};
   const test=async()=>{setBusy(true);const r=await testAdminMail(csrfToken);setBusy(false);setNotice({error:!r.ok,text:r.message||r.error});};
   return <section className="rounded-xl border border-slate-200 bg-white p-6 space-y-4" aria-label="تنظیمات ایمیل مدیر">
-    <div><h2 className="font-bold">اعلان ایمیلی مدیر</h2><p className="mt-2 text-sm leading-6 text-slate-600">در حال حاضر برای درخواست جدید تبلیغات و گزارش خطای کاربران اعلان ارسال می‌شود. ثبت درخواست مستقل از موفقیت ایمیل است و به کرون نیاز ندارد. اطلاعات تماس در ایمیل قرار نمی‌گیرد.</p></div>
+    <div><h2 className="font-bold">اعلان ایمیلی مدیر</h2><p className="mt-2 text-sm leading-6 text-slate-600">در حال حاضر برای درخواست جدید تبلیغات، گزارش خطا و دیدگاه جدید کاربران اعلان ارسال می‌شود. ثبت درخواست مستقل از موفقیت ایمیل است و به کرون نیاز ندارد. اطلاعات تماس در ایمیل قرار نمی‌گیرد.</p></div>
+    {settings?.notify_state?.at && (()=>{const ns=settings.notify_state;const res=NOTIFY_RESULT[ns.result]||NOTIFY_RESULT.failed;return <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+      <p className="font-bold">آخرین اعلان خودکار (ثبت فرم عمومی)</p>
+      <p className="mt-1 text-xs leading-6 text-slate-600">{NOTIFY_EVENT_LABELS[ns.event]||ns.event} · <span className={`inline-block rounded border px-2 py-0.5 text-xs font-bold ${res.cls}`}>{res.label}</span> · <span className="font-mono" dir="ltr">{ns.at}</span></p>
+      {ns.note?<p className="mt-1 text-xs leading-6 text-amber-800">{ns.note}</p>:null}
+      {ns.result==='skipped'&&!settings.enabled?<p className="mt-1 text-xs leading-6 text-amber-800">کلید «ارسال اعلان‌ها فعال باشد» را روشن و ذخیره کنید تا اعلان‌های فرم عمومی ارسال شوند؛ تست ایمیلی مستقل از این کلید است.</p>:null}
+    </div>;})()}
     {notice&&<p role={notice.error?'alert':'status'} className={`rounded-lg p-3 text-sm ${notice.error?'bg-rose-50 text-rose-800':'bg-emerald-50 text-emerald-800'}`}>{notice.text}</p>}
     {!settings?<button type="button" onClick={()=>void load()} className="rounded border px-3 py-2 text-sm">دریافت دوباره تنظیمات</button>:<form onSubmit={e=>void save(e)} className="space-y-4">
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={settings.enabled} onChange={e=>update({enabled:e.target.checked})}/> ارسال اعلان‌ها فعال باشد</label>

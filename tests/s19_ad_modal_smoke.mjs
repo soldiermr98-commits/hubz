@@ -28,7 +28,7 @@ const read = (p) => readFile(p, 'utf8');
   assert.ok(psc.includes('href="/advertise" data-hx-ad-modal'), 'لینک‌های CTA هم مسیر واقعی دارند (بدون JS به صفحه اختصاصی می‌روند) هم مودال را باز می‌کنند');
 
   const cache = await read('app/Core/Cache.php');
-  assert.ok(cache.includes('public.css?v=s20.0'), 'اعتبارسنج کش دست‌کم s20.0 را می‌پذیرد (از S19 به بعد ارتقا یافته)');
+  assert.ok(cache.includes('public.css?v=s21.0'), 'اعتبارسنج کش دست‌کم s21.0 را می‌پذیرد (از S19 به بعد ارتقا یافته)');
 
   console.log('OK بک‌اند: سوال امنیتی تبلیغات + صفحه /advertise + مودال در لایوت');
 }
@@ -68,10 +68,10 @@ const read = (p) => readFile(p, 'utf8');
   const api = await read('public_html/api/index.php');
   assert.ok(api.includes("'/api/v1/public/ad-question', [PublicSiteController::class, 'adQuestion']"), 'روت API سوال امنیتی ثبت شده است');
   const psc = await read('app/Controllers/PublicSiteController.php');
-  assert.ok(psc.includes('public.css?v=s20.0') && psc.includes('public.js?v=s20.0'), 'بارنامه دارایی‌ها دست‌کم s20.0 است (از S19 به بعد ارتقا یافته)');
+  assert.ok(psc.includes('public.css?v=s21.0') && psc.includes('public.js?v=s21.0'), 'بارنامه دارایی‌ها دست‌کم s21.0 است (از S19 به بعد ارتقا یافته)');
   const js = await read('public_html/assets/js/public.js');
-  assert.ok(js.includes('leaflet.css?v=s20') && js.includes('leaflet.js?v=s20'), 'لودر نقشه دست‌کم s20 است');
-  console.log('OK روت‌ها و نسخه‌ها: /advertise + ad-question + s20.0');
+  assert.ok(js.includes('leaflet.css?v=s21') && js.includes('leaflet.js?v=s21'), 'لودر نقشه دست‌کم s21 است');
+  console.log('OK روت‌ها و نسخه‌ها: /advertise + ad-question + s21.0');
 }
 
 console.log('\nهمه بررسی‌های S19 با موفقیت گذشت');

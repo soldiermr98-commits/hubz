@@ -41,17 +41,17 @@ const read = (p) => readFile(p, 'utf8');
   assert.ok(!heroSection.includes('googleSearch'), 'جستجوی متنی در دکمهٔ اصلی (hero/compact) نیست');
   // markers: business id برای بیکن پاپ‌آپ
   assert.ok(psc.includes("'id'       => (int)$b['id'],"), 'مارکرهای نقشه شامل شناسهٔ کسب‌وکار هستند (بیکن پاپ‌آپ)');
-  // نسخهٔ دارایی‌ها دست‌کم s20.0 برای ریست کش و OPcache (ارتقاهای S18→S20)
-  assert.ok(psc.includes('public.css?v=s20.0') && psc.includes('public.js?v=s20.0'), 'نسخهٔ دارایی‌ها به s20.0 ارتقا یافته است');
-  console.log('OK PublicSiteController: منطق دکمهٔ اصلی/کمکی + بیکن + نسخهٔ s20.0');
+  // نسخهٔ دارایی‌ها دست‌کم s21.0 برای ریست کش و OPcache (ارتقاهای S18→S21)
+  assert.ok(psc.includes('public.css?v=s21.0') && psc.includes('public.js?v=s21.0'), 'نسخهٔ دارایی‌ها به s21.0 ارتقا یافته است');
+  console.log('OK PublicSiteController: منطق دکمهٔ اصلی/کمکی + بیکن + نسخهٔ s21.0');
 }
 
 // ---------- ۳) Cache و public.js ----------
 {
   const cache = await read('app/Core/Cache.php');
-  assert.ok(cache.includes('public.css?v=s20.0'), 'کش صفحات با نسخهٔ s20.0 ناسازگارها را باطل می‌کند');
+  assert.ok(cache.includes('public.css?v=s21.0'), 'کش صفحات با نسخهٔ s21.0 ناسازگارها را باطل می‌کند');
   const js = await read('public_html/assets/js/public.js');
-  assert.ok(js.includes('/assets/vendor/leaflet/leaflet.js?v=s20'), 'نسخهٔ موتور نقشه در lazy-loader به s20 ارتقا یافته است');
+  assert.ok(js.includes('/assets/vendor/leaflet/leaflet.js?v=s21'), 'نسخهٔ موتور نقشه در lazy-loader به s21 ارتقا یافته است');
   const leaflet = await read('public_html/assets/vendor/leaflet/leaflet.js');
   assert.ok(leaflet.includes('https://nshn.ir/?lat=') && leaflet.includes('https://balad.ir/location?latitude='), 'پاپ‌آپ نقشه لینک نشان و بلد دارد');
   assert.ok(leaflet.includes("'map_popup'"), 'لینک‌های پاپ‌آپ با source-page نقشه‌ای رهگیری می‌شوند');
@@ -103,7 +103,9 @@ const read = (p) => readFile(p, 'utf8');
   // 013 و 020 نباید با 014 هم‌نام شوند
   assert.ok(files.includes('013_analytics_and_ai_logs.sql'), '013 آمار دست‌نخورده است');
   assert.ok(files.includes('020_business_comments.sql'), '020 دیدگاه‌ها دست‌نخورده است');
-  assert.ok(!files.some((f) => f.startsWith('021')), 'شماره‌گذاری بدون جهش نامنظم از 020 فراتر نرفته است');
+  // از S21 به بعد مایگریشن 021 (خروج دیدگاه‌ها از صندوق بازبینی) مجاز است؛ بعد از آن جهش نامنظم ممنوع
+  assert.ok(files.includes('021_comments_out_of_review_queue.sql'), 'مایگریشن 021 خروج دیدگاه‌ها از صندوق بازبینی موجود است');
+  assert.ok(!files.some((f) => /^02[2-9]/.test(f)), 'شماره‌گذاری بدون جهش نامنظم از 021 فراتر نرفته است');
   console.log('OK مایگریشن 014: ستون‌ها + تکرارپذیری + بدون تداخل شماره');
 }
 

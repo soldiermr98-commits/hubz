@@ -16,7 +16,9 @@ use Throwable;
  */
 final class AnalyticsController
 {
-    /** GET /api/v1/analytics/dashboard — خلاصهٔ تجمیعی، سری روزانه و برترین‌ها. */
+    /** GET /api/v1/analytics/dashboard — خلاصهٔ تجمیعی، سری روزانه و برترین‌ها.
+     * S21: خطای جزئی هر بخش داشبورد را نمی‌شکند؛ پاسخ شامل warnings و در صورت نیاز detail است.
+     */
     public static function dashboard(Request $request): void
     {
         Auth::requireRole(['admin']);
@@ -28,10 +30,33 @@ final class AnalyticsController
                 'target_type' => $request->query('target_type'),
                 'target_id' => (int) $request->query('target_id', 0),
             ];
-            Response::json(['ok' => true] + AnalyticsService::dashboard($filters));
+            $data = AnalyticsService::dashboard($filters);
+            // S21: پاسخ همیشه ۲۰۰ است؛ هشدارهای جزئی در warnings به پنل می‌روند تا داشبورد با دادهٔ موجود رندر شود.
+            Response::json(['ok' => true] + $data);
         } catch (Throwable $e) {
             error_log('Analytics dashboard failed: ' . $e->getMessage());
-            Response::json(['ok' => false, 'error' => 'خواندن آمار ناموفق بود؛ وضعیت دیتابیس را بررسی کنید.'], 500);
+            // S21: دلیل واقعی برای مدیر در پنل نمایش داده می‌شود (این مسیر فقط برای admin است).
+            Response::json([
+                'ok' => false,
+                'error' => 'خواندن آمار ناموفق بود؛ وضعیت دیتابیس را بررسی کنید.',
+                'detail' => 'خطای سرور: ' . mb_substr(trim($e->getMessage()) !== '' ? $e->getMessage() : get_class($e), 0, 240),
+            ], 500);
+        }
+    }
+
+    /** GET /api/v1/analytics/diagnose — بررسی سلامت جدول‌ها و کوئری‌های آمار (فقط admin). */
+    public static function diagnose(Request $request): void
+    {
+        Auth::requireRole(['admin']);
+        try {
+            Response::json(['ok' => true] + AnalyticsService::diagnose());
+        } catch (Throwable $e) {
+            error_log('Analytics diagnose failed: ' . $e->getMessage());
+            Response::json([
+                'ok' => false,
+                'error' => 'اجرای بررسی دیتابیس ناموفق بود.',
+                'detail' => 'خطای سرور: ' . mb_substr(trim($e->getMessage()) !== '' ? $e->getMessage() : get_class($e), 0, 240),
+            ], 500);
         }
     }
 
