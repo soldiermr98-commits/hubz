@@ -61,6 +61,30 @@ final class ArticleController
     }
 
     /**
+     * POST /api/v1/articles/delete — حذف کامل مقاله از دیتابیس (S20، فقط ادمین)
+     * برخلاف ذخیره، این عملیات بازگشت‌ناپذیر است: رکورد مقاله و همهٔ ردیف‌های وابسته واقعاً پاک می‌شوند.
+     */
+    public static function destroy(Request $req, array $params = []): void
+    {
+        Csrf::verifyOrFail($req);
+        Auth::requireRole(['admin']);
+        $body = $req->json();
+        $id = (int)($body['id'] ?? 0);
+        if ($id <= 0) {
+            Response::json(['ok' => false, 'error' => 'شناسهٔ مقاله نامعتبر است.'], 422);
+            return;
+        }
+        $result = ArticleService::deleteArticle($id);
+        if (!$result['ok']) {
+            $notFound = str_contains((string)$result['error'], 'یافت نشد');
+            Response::json($result, $notFound ? 404 : 500);
+            return;
+        }
+        Cache::flushAll();
+        Response::json(['ok' => true, 'message' => 'مقاله «' . $result['title'] . '» به‌همراه همهٔ رکوردهای وابسته، به‌طور کامل از دیتابیس حذف شد.']);
+    }
+
+    /**
      * POST /api/v1/articles/auto-build
      * تولید خودکار مقاله «بهترین {دسته} در {شهر}» از کسب‌وکارهای برتر آن شهر و دسته
      */

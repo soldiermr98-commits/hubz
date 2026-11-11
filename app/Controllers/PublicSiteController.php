@@ -628,10 +628,10 @@ final class PublicSiteController
                     <?php if (!empty($biz['lat']) && !empty($biz['lng'])): ?>
                         <?= self::mapActionLinks($biz, $googlePlaceId, 'business_detail', 'hero') ?>
                     <?php endif; ?>
-                    <a class="hx-btn hx-btn-outline" target="_blank" rel="noopener" href="<?= self::e($baseUrl) ?>/comment/<?= self::e((string)$biz['city_slug']) ?>/<?= self::e((string)$biz['slug']) ?>/">
+                    <button type="button" class="hx-btn hx-btn-outline" data-hx-open-comment-form>
                         <?= self::icon('message-question', 'hx-icon hx-icon-sm') ?>
-                        <span>ثبت دیدگاه شما (تب جدید)</span>
-                    </a>
+                        <span>ثبت دیدگاه شما</span>
+                    </button>
                 </div>
             </article>
 
@@ -694,10 +694,51 @@ final class PublicSiteController
                     <section class="hx-detail-section" id="hx-reviews">
                         <div class="hx-reviews-head">
                             <h2><?= self::icon('star') ?> دیدگاه‌ها و امتیازها</h2>
-                            <a class="hx-btn hx-btn-primary" target="_blank" rel="noopener" href="<?= self::e($baseUrl) ?>/comment/<?= self::e((string)$biz['city_slug']) ?>/<?= self::e((string)$biz['slug']) ?>/">
+                            <button type="button" class="hx-btn hx-btn-primary" data-hx-open-comment-form>
                                 <?= self::icon('message-question', 'hx-icon hx-icon-sm') ?>
-                                <span>ثبت دیدگاه (تب جدید)</span>
-                            </a>
+                                <span>ثبت دیدگاه</span>
+                            </button>
+                        </div>
+
+                        <?php /* S20: فرم ثبت دیدگاه درون‌صفحه‌ای؛ بدون تب جدید. سوال امنیتی برای صفحات کش‌شده با جاوااسکریپت تازه گرفته می‌شود. */ ?>
+                        <div class="hx-inline-comment hx-comment-card" id="hx-inline-comment" hidden>
+                            <h3>ثبت دیدگاه درباره «<?= self::e($biz['name']) ?>»</h3>
+                            <p class="hx-comment-sub">دیدگاه شما مستقیماً برای تحریریه حامی‌هاب ثبت می‌شود؛ پس از تایید، با نشان «تایید حامی‌هاب» در همین صفحه نمایش داده می‌شود.</p>
+                            <form data-hx-public-form="comment" data-hx-inline-comment-form method="post" action="/api/v1/public/comments">
+                                <input type="hidden" name="business_id" value="<?= (int)$biz['id'] ?>">
+                                <input type="hidden" name="hx_a" value="">
+                                <input type="hidden" name="hx_b" value="">
+                                <input type="hidden" name="hx_ts" value="">
+                                <input type="hidden" name="hx_sig" value="">
+                                <input type="text" name="website_hp" value="" tabindex="-1" autocomplete="off" style="display:none!important;" aria-hidden="true">
+                                <div class="hx-comment-grid">
+                                    <div>
+                                        <label for="hx-i-name">نام شما *</label>
+                                        <input id="hx-i-name" type="text" name="name" required maxlength="60" placeholder="مثلاً: سارا محمدی">
+                                    </div>
+                                    <div>
+                                        <label id="hx-i-rating-label">امتیاز شما *</label>
+                                        <?= self::starWidget('hx-i') ?>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label for="hx-i-body">دیدگاه شما *</label>
+                                    <textarea id="hx-i-body" name="body" required rows="4" minlength="10" maxlength="1000" placeholder="کیفیت خدمات، برخورد پرسنل، قیمت یا هر تجربه‌ای که برای دیگران مفید است…"></textarea>
+                                </div>
+                                <div>
+                                    <label for="hx-i-answer"><span data-hx-c-q-label>سوال امنیتی در حال آماده‌سازی…</span></label>
+                                    <input id="hx-i-answer" type="text" name="answer" required maxlength="4" inputmode="numeric" placeholder="پاسخ عددی" dir="ltr">
+                                </div>
+                                <div class="hx-comment-actions">
+                                    <button type="submit" class="hx-btn hx-btn-primary">ارسال دیدگاه برای تایید تحریریه</button>
+                                    <span data-hx-form-msg role="status" aria-live="polite"></span>
+                                </div>
+                                <noscript><a class="hx-btn hx-btn-outline" href="<?= self::e($baseUrl) ?>/comment/<?= self::e((string)$biz['city_slug']) ?>/<?= self::e((string)$biz['slug']) ?>/">رفتن به فرم ثبت دیدگاه</a></noscript>
+                            </form>
+                            <div data-hx-comment-done class="hx-comment-done" hidden>
+                                <h2><?= self::icon('tick-circle') ?> دیدگاه شما ثبت شد</h2>
+                                <p>متن دیدگاه در صندوق بازبینی تحریریه است و پس از تایید، در همین صفحه با نشان «تایید حامی‌هاب» نمایش داده می‌شود.</p>
+                            </div>
                         </div>
 
                         <?php if (!empty($comments)): ?>
@@ -1485,8 +1526,27 @@ final class PublicSiteController
     }
 
     /**
-     * GET /comment/{city}/{slug} — صفحه اختصاصی ثبت دیدگاه (S16)
-     * عمداً کش نمی‌شود؛ سوال امنیتی برای هر بازدید تازه ساخته می‌شود و فرم در تب جدید باز می‌شود.
+     * S20: ویجت ستاره‌های امتیاز — مقدار هر ستاره در data-star-value و بازخورد عددی زنده؛
+     * پرشدن همهٔ ستاره‌ها تا انتخاب کاربر با public.js انجام می‌شود (بدون JS هم ستارهٔ انتخاب‌شده پر می‌ماند).
+     */
+    private static function starWidget(string $idPrefix): string
+    {
+        $html = '<div class="hx-star-widget" data-hx-star-widget>'
+            . '<div class="hx-star-row" role="radiogroup" aria-labelledby="' . self::e($idPrefix) . '-rating-label">';
+        for ($v = 5; $v >= 1; $v--) {
+            $html .= '<label class="hx-star" data-star-value="' . $v . '">'
+                . '<input type="radio" name="rating" value="' . $v . '" required aria-label="امتیاز ' . self::faDigits((string)$v) . ' از ۵">'
+                . '<span>' . self::icon('star') . '</span></label>';
+        }
+        $html .= '</div>'
+            . '<span class="hx-star-value" data-hx-star-value data-active="0">امتیاز را با کلیک روی ستاره‌ها انتخاب کنید</span>'
+            . '</div>';
+        return $html;
+    }
+
+    /**
+     * GET /comment/{city}/{slug} — صفحه اختصاصی ثبت دیدگاه (S16؛ از S20 مسیر پشتیبان برای بدون‌جاوااسکریپت)
+     * عمداً کش نمی‌شود؛ سوال امنیتی برای هر بازدید تازه ساخته می‌شود.
      */
     public static function commentPage(Request $req, array $params = []): void
     {
@@ -1551,11 +1611,7 @@ final class PublicSiteController
                         </div>
                         <div>
                             <label id="hx-c-rating-label">امتیاز شما *</label>
-                            <div class="hx-star-row" role="radiogroup" aria-labelledby="hx-c-rating-label">
-                                <?php for ($v = 5; $v >= 1; $v--): ?>
-                                    <label class="hx-star"><input type="radio" name="rating" value="<?= $v ?>" required><span><?= self::icon('star') ?></span></label>
-                                <?php endfor; ?>
-                            </div>
+                            <?= self::starWidget('hx-c') ?>
                         </div>
                     </div>
                     <div>
@@ -2162,6 +2218,7 @@ final class PublicSiteController
 
         $urls = [
             ['loc' => $baseUrl . '/', 'priority' => '1.0', 'changefreq' => 'daily'],
+            ['loc' => $baseUrl . '/advertise', 'priority' => '0.6', 'changefreq' => 'monthly'],
         ];
 
         $cities = DB::fetchAll("SELECT slug FROM cities WHERE is_active = 1 ORDER BY id ASC");
@@ -2646,6 +2703,30 @@ final class PublicSiteController
     }
 
     /**
+     * S20: سوال امنیتی تازه برای فرم دیدگاه درون‌صفحه‌ای روی صفحات کش‌شده — GET /api/v1/public/comment-question
+     * همان سازوکار HMAC دیدگاه‌ها؛ سوال هنگام باز شدن فرم گرفته می‌شود تا صفحات کش‌شده سوال منقضی نداشته باشند.
+     */
+    public static function commentQuestion(Request $req, array $params = []): void
+    {
+        header('Cache-Control: no-store, max-age=0');
+        if (Auth::isRateLimited('@public-adq', $req->ip())) {
+            Response::json(['ok' => false, 'error' => 'درخواست‌ها زیاد است؛ کمی بعد تلاش کنید.'], 429);
+            return;
+        }
+        try {
+            $question = CommentService::generateQuestion(0);
+        } catch (Throwable $e) {
+            error_log('HX comment-question failed: ' . $e->getMessage());
+            Response::json(['ok' => false, 'error' => 'ساخت سوال امنیتی ممکن نشد؛ دوباره تلاش کنید.'], 500);
+            return;
+        }
+        Response::json(['ok' => true, 'question' => [
+            'a' => (int)$question['a'], 'b' => (int)$question['b'], 'ts' => (int)$question['ts'],
+            'sig' => (string)$question['sig'], 'label' => (string)$question['label'],
+        ]]);
+    }
+
+    /**
      * POST /api/v1/system/cron-run — اجرای دستی ورکر ۵ دقیقه‌ای S6 از داخل پنل مدیریت بدون نیاز به SSH
      */
     public static function runCronMaintenance(Request $req, array $params = []): void
@@ -2885,7 +2966,7 @@ final class PublicSiteController
     <meta name="twitter:image" content="<?= self::e($baseUrl) ?>/assets/img/logo-hx-card.webp">
     <link rel="preload" href="/assets/fonts/Vazirmatn-Regular.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/assets/fonts/Vazirmatn-Bold.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="/assets/css/public.css?v=s19.0">
+    <link rel="stylesheet" href="/assets/css/public.css?v=s20.0">
     <!-- hhx-ad-until:<?= $adUntil ?> -->
     <!-- hhx-sponsor-until:<?= max(0, (int)($data['sponsor_until'] ?? 0)) ?> -->
     <?php foreach ($schemas as $schema):
@@ -2942,7 +3023,7 @@ final class PublicSiteController
                 <a href="/city/rasht/">بهترین‌های رشت</a>
                 <a href="/city/bandar-anzali/">بهترین‌های بندر انزلی</a>
                 <a href="/city/lahijan/">بهترین‌های لاهیجان</a>
-                <a href="/advertise" data-hx-ad-modal>درخواست تبلیغات</a>
+                <a href="/advertise">درخواست تبلیغات</a>
             </nav>
             <div class="hx-footer-col">
                 <h3>داده و استناد</h3>
@@ -2986,7 +3067,7 @@ final class PublicSiteController
         <?= self::icon('arrow-up', 'hx-icon') ?>
         <span class="hx-visually-hidden">بازگشت به بالا</span>
     </button>
-    <script src="/assets/js/public.js?v=s19.0" defer></script>
+    <script src="/assets/js/public.js?v=s20.0" defer></script>
 </body>
 </html>
         <?php

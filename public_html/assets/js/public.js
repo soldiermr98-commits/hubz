@@ -23,11 +23,11 @@
 
     var link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/assets/vendor/leaflet/leaflet.css?v=s19';
+    link.href = '/assets/vendor/leaflet/leaflet.css?v=s20';
     document.head.appendChild(link);
 
     var script = document.createElement('script');
-    script.src = '/assets/vendor/leaflet/leaflet.js?v=s19';
+    script.src = '/assets/vendor/leaflet/leaflet.js?v=s20';
     script.async = true;
     script.onload = function () {
       leafletLoaded = true;
@@ -265,9 +265,15 @@
           if (formType === 'advertising') {
             try { document.dispatchEvent(new CustomEvent('hx:ad-success')); } catch (e) {}
           }
-        } else if (formType === 'advertising' && String(res.error || '').indexOf('امنیتی') !== -1) {
-          // S19: سوال منقضی/نادرست — سوال تازه برای مودال گرفته شود
-          try { document.dispatchEvent(new CustomEvent('hx:ad-refresh-question')); } catch (e) {}
+        } else {
+          if (formType === 'comment' && String(res.error || '').indexOf('امنیتی') !== -1) {
+            // S20: سوال منقضی/نادرست — سوال تازه برای فرم دیدگاه گرفته شود
+            try { document.dispatchEvent(new CustomEvent('hx:comment-refresh-question')); } catch (e) {}
+          }
+          if (formType === 'advertising' && String(res.error || '').indexOf('امنیتی') !== -1) {
+            // S19: سوال منقضی/نادرست — سوال تازه برای مودال گرفته شود
+            try { document.dispatchEvent(new CustomEvent('hx:ad-refresh-question')); } catch (e) {}
+          }
         }
       })
       .catch(function () {
@@ -276,6 +282,109 @@
           msgEl.textContent = 'خطا در ارتباط با سرور.';
         }
       }).finally(function () { if (submit) submit.disabled = false; });
+  });
+
+  // S20 — ویجت ستاره‌های امتیاز: مقدار عددی هر ستاره، پیش‌نمایش با هاور و پرشدن همهٔ ستاره‌ها تا انتخاب کاربر
+  // (سلکتورهای CSS خالص بین لیبل‌ها کار نمی‌کنند چون input داخل label تو‌در‌توست؛ اینجا با کلاس‌های is-on/is-hover حل می‌شود)
+  function initStarWidgets() {
+    var faDigits = ['۰', '۱', '۲', '۳', '۴', '۵'];
+    document.querySelectorAll('[data-hx-star-widget]').forEach(function (widget) {
+      var row = widget.querySelector('.hx-star-row');
+      if (!row || row.getAttribute('data-star-init') === '1') return;
+      row.setAttribute('data-star-init', '1');
+      var labels = Array.prototype.slice.call(row.querySelectorAll('.hx-star'));
+      var out = widget.querySelector('[data-hx-star-value]');
+      var current = 0;
+      function starValue(label) { return Number(label.getAttribute('data-star-value') || 0); }
+      function paint(count, cls) {
+        labels.forEach(function (label) {
+          label.classList.toggle(cls, count > 0 && starValue(label) <= count);
+        });
+      }
+      function setOutput(v) {
+        if (!out) return;
+        if (v >= 1 && v <= 5) {
+          out.textContent = 'امتیاز شما: ' + faDigits[v] + ' از ۵';
+          out.setAttribute('data-active', '1');
+        } else {
+          out.textContent = 'امتیاز را با کلیک روی ستاره‌ها انتخاب کنید';
+          out.setAttribute('data-active', '0');
+        }
+      }
+      labels.forEach(function (label) {
+        var input = label.querySelector('input');
+        if (!input) return;
+        label.addEventListener('mouseenter', function () {
+          paint(starValue(label), 'is-hover');
+          setOutput(starValue(label));
+        });
+        input.addEventListener('change', function () {
+          current = Number(input.value) || 0;
+          paint(current, 'is-on');
+          setOutput(current);
+        });
+      });
+      row.addEventListener('mouseleave', function () {
+        paint(0, 'is-hover');
+        setOutput(current);
+      });
+      var checked = row.querySelector('input:checked');
+      if (checked) {
+        current = Number(checked.value) || 0;
+        paint(current, 'is-on');
+        setOutput(current);
+      }
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initStarWidgets);
+  else initStarWidgets();
+
+  // S20 — فرم دیدگاه درون‌صفحه‌ای (بدون تب جدید): سوال امنیتی هنگام باز شدن فرم تازه گرفته می‌شود (سازگار با صفحات کش‌شده)
+  function fillCommentQuestion(form) {
+    if (!form) return;
+    fetch('/api/v1/public/comment-question', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res || !res.ok || !res.question) return;
+        var qa = form.querySelector('[name="hx_a"]');
+        var qb = form.querySelector('[name="hx_b"]');
+        var qt = form.querySelector('[name="hx_ts"]');
+        var qs = form.querySelector('[name="hx_sig"]');
+        if (qa) qa.value = res.question.a;
+        if (qb) qb.value = res.question.b;
+        if (qt) qt.value = res.question.ts;
+        if (qs) qs.value = res.question.sig;
+        var label = form.querySelector('[data-hx-c-q-label]');
+        if (label) label.textContent = 'سوال امنیتی: ' + res.question.label + ' *';
+      })
+      .catch(function () {});
+  }
+  (function () {
+    var card = document.getElementById('hx-inline-comment');
+    if (!card) return;
+    var form = card.querySelector('form[data-hx-inline-comment-form]');
+    var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.addEventListener('click', function (ev) {
+      var target = ev.target;
+      if (!target || !target.closest) return;
+      var opener = target.closest('[data-hx-open-comment-form]');
+      if (!opener) return;
+      ev.preventDefault();
+      card.removeAttribute('hidden');
+      fillCommentQuestion(form); // همیشه سوال تازه؛ حتی اگر فرم قبلاً باز شده بود
+      var name = form ? form.querySelector('input[name="name"]') : null;
+      try { card.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' }); } catch (e) {}
+      if (name) { try { name.focus({ preventScroll: true }); } catch (e) { try { name.focus(); } catch (e2) {} } }
+    });
+    document.addEventListener('hx:comment-refresh-question', function () {
+      if (card.hasAttribute('hidden')) return;
+      fillCommentQuestion(form);
+    });
+  })();
+  // صفحهٔ اختصاصی ثبت دیدگاه هم اگر سوالش منقضی شود، با همین اندپوینت سوال تازه می‌گیرد
+  document.addEventListener('hx:comment-refresh-question', function () {
+    var standalone = document.getElementById('hx-comment-form');
+    if (standalone) fillCommentQuestion(standalone);
   });
 
   // S10 — فیلتر دسته‌بندی کارت‌های «برترین کسب‌وکارها» در صفحه اصلی
@@ -293,16 +402,30 @@
       });
     });
   });
-  // S16 — پس از موفقیت ثبت دیدگاه، فرم پنهان و کارت تشکر نمایش داده می‌شود
+  // S16/S20 — پس از موفقیت ثبت دیدگاه، فرم پنهان و کارت تشکر نمایش داده می‌شود
+  // (فرم درون‌صفحه‌ایِ صفحه کسب‌وکار + صفحهٔ اختصاصی /comment/… هر دو پشتیبانی می‌شوند)
   document.addEventListener('hx:comment-success', function () {
+    var inlineForm = document.querySelector('form[data-hx-inline-comment-form]');
+    if (inlineForm && !inlineForm.closest('[hidden]')) {
+      inlineForm.style.display = 'none';
+      var card = document.getElementById('hx-inline-comment');
+      var inlineDone = card ? card.querySelector('[data-hx-comment-done]') : null;
+      if (inlineDone) {
+        inlineDone.removeAttribute('hidden');
+        var smooth = true;
+        try { smooth = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
+        try { inlineDone.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'center' }); } catch (e) {}
+      }
+      return;
+    }
     var form = document.getElementById('hx-comment-form');
     var done = document.getElementById('hx-comment-done');
     if (form) form.style.display = 'none';
     if (done) {
       done.style.display = 'block';
-      var smooth = true;
-      try { smooth = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
-      try { done.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'center' }); } catch (e) {}
+      var smooth2 = true;
+      try { smooth2 = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
+      try { done.scrollIntoView({ behavior: smooth2 ? 'smooth' : 'auto', block: 'center' }); } catch (e) {}
     }
   });
 

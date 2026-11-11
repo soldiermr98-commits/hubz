@@ -8,7 +8,7 @@ import { MediaLibraryPickerModal } from './MediaLibraryPickerModal';
 import { insertArticleSuggestion, isRichArticleText } from '../services/articleText';
 import {
   ArticleBizRow, ArticleData, ArticleFaqRow, ArticleItem, ArticleItemDisplay, ArticleTopicTag, BusinessItem, CategoryItem, CityItem,
-  autoBuildCityCategoryArticle, fetchArticleBusinesses, fetchArticlesList, saveArticleItem,
+  autoBuildCityCategoryArticle, deleteArticleItem, fetchArticleBusinesses, fetchArticlesList, saveArticleItem,
   updateArticleSchema, updateArticleTagsSchema, uploadMediaWebp,
 } from '../services/adminApi';
 
@@ -104,6 +104,21 @@ export const ArticlesManagerView:React.FC<Props> = ({cities,categories,csrfToken
   };
   const returnToList = () => {if(canLeave()){setMode('list');setDirty(false);setMessage(null);}};
   const updateList = (article:ArticleItem) => setArticles(prev=>[article,...prev.filter(a=>Number(a.id)!==Number(article.id))]);
+
+  // S20: حذف کامل مقاله از دیتابیس — بازگشت‌ناپذیر؛ رکورد و همهٔ ردیف‌های وابسته واقعاً پاک می‌شوند.
+  const removeArticle = async (a:ArticleItem) => {
+    const title = a.revision?.data.title_fa || a.title_fa || `#${a.id}`;
+    if (!window.confirm(`مقاله «${title}» برای همیشه از دیتابیس حذف شود؟\nاین عملیات بازگشت‌ناپذیر است: نسخهٔ منتشرشده، پیش‌نویس، پیش‌نمایش خصوصی و نشانی مقاله کامل پاک می‌شود و هیچ اثری از آن در سایت یا دیتابیس نمی‌ماند.`)) return;
+    setBusy(true);setMessage(null);
+    try {
+      const res = await deleteArticleItem(Number(a.id), csrfToken);
+      setMessage({error:false,text:res.message || 'مقاله کامل حذف شد.'});
+      setArticles(prev=>prev.filter(x=>Number(x.id)!==Number(a.id)));
+      if (selected && Number(selected.id)===Number(a.id)) { setSelected(null); setMode('list'); }
+    } catch(e) {
+      setMessage({error:true,text:e instanceof Error?e.message:'حذف مقاله ناموفق بود.'});
+    } finally { setBusy(false); }
+  };
 
   const save = async (status:'draft'|'review'|'published'):Promise<ArticleItem|null> => {
     if (inFlight.current) return null;
@@ -215,7 +230,7 @@ export const ArticlesManagerView:React.FC<Props> = ({cities,categories,csrfToken
         {loading ? <p className="p-6 text-sm text-slate-500">در حال دریافت مقاله‌ها…</p> : articles.length===0 ? <div className="p-8 text-center text-slate-600"><FileText className="mx-auto mb-2"/><p>هنوز مقاله‌ای ثبت نشده است.</p><p className="text-sm mt-1">با «مقاله جدید» شروع کنید.</p></div> :
           <ul className="divide-y divide-slate-100">{articles.map(a=><li key={a.id} className="p-4 flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0"><div className="font-bold break-words">{a.revision?.data.title_fa || a.title_fa}</div><div className="text-xs text-slate-600 mt-1">{statusLabel(a)}</div></div>
-            <div className="flex flex-wrap gap-2"><button className={secondary} disabled={!schemaReady} onClick={()=>openArticle(a)}>ویرایش</button><a className={secondary} href={`/api/v1/articles/preview/${a.id}`} target="_blank" rel="noreferrer"><Eye size={15}/> پیش‌نمایش خصوصی</a>{a.status==='published'&&<a className={secondary} href={`/${a.slug}/`} target="_blank" rel="noreferrer"><ExternalLink size={15}/> نسخه منتشرشده</a>}</div>
+            <div className="flex flex-wrap gap-2"><button className={secondary} disabled={!schemaReady} onClick={()=>openArticle(a)}>ویرایش</button><a className={secondary} href={`/api/v1/articles/preview/${a.id}`} target="_blank" rel="noreferrer"><Eye size={15}/> پیش‌نمایش خصوصی</a>{a.status==='published'&&<a className={secondary} href={`/${a.slug}/`} target="_blank" rel="noreferrer"><ExternalLink size={15}/> نسخه منتشرشده</a>}{isAdmin&&<button className="inline-flex items-center justify-center gap-2 rounded-lg border border-rose-300 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50" disabled={busy} onClick={()=>void removeArticle(a)}><Trash2 size={15}/> حذف کامل</button>}</div>
           </li>)}</ul>}
       </div>
       <details className="bg-white border border-slate-200 rounded-xl p-4"><summary className="cursor-pointer text-sm font-bold">ساخت پیش‌نویس فهرست کسب‌وکارها (اختیاری)</summary>

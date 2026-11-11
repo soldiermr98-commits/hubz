@@ -439,4 +439,43 @@ final class ArticleService
         }
         return 'applied';
     }
+
+    /**
+     * S20: حذف کامل مقاله از دیتابیس (Hard Delete) — فقط ادمین.
+     * همهٔ رکوردهای وابسته (آیتم‌ها، پرسش‌ها، برچسب‌های موضوعی، نسخهٔ خصوصی، کاور،
+     * نام‌های جایگزین نشانی، ردیف‌های صف بازبینی و آمار رویدادها) در یک تراکنش پاک می‌شوند
+     * تا هیچ اثری از مقاله در دیتابیس یا سایت باقی نماند.
+     * @return array<string,mixed>
+     */
+    public static function deleteArticle(int $id): array
+    {
+        $pdo = DB::connection();
+        $pdo->beginTransaction();
+        try {
+            $article = DB::fetchOne('SELECT id, title, slug, status FROM articles WHERE id=:id FOR UPDATE', ['id' => $id]);
+            if (!$article) {
+                $pdo->rollBack();
+                return ['ok' => false, 'error' => 'مقاله یافت نشد؛ شاید قبلاً حذف شده باشد.'];
+            }
+            DB::query('DELETE FROM article_items WHERE article_id=:id', ['id' => $id]);
+            DB::query('DELETE FROM article_faqs WHERE article_id=:id', ['id' => $id]);
+            if (self::tagsSchemaReady()) {
+                DB::query('DELETE FROM article_tag_links WHERE article_id=:id', ['id' => $id]);
+            }
+            if (self::schemaReady()) {
+                DB::query('DELETE FROM article_revisions WHERE article_id=:id', ['id' => $id]);
+                DB::query('DELETE FROM article_extras WHERE article_id=:id', ['id' => $id]);
+                DB::query('DELETE FROM article_url_aliases WHERE article_id=:id', ['id' => $id]);
+            }
+            DB::query("DELETE FROM review_queue WHERE kind='article' AND target_id=:id", ['id' => $id]);
+            DB::query('DELETE FROM events_daily WHERE article_id=:id', ['id' => $id]);
+            DB::query('DELETE FROM articles WHERE id=:id', ['id' => $id]);
+            $pdo->commit();
+            return ['ok' => true, 'title' => (string)$article['title'], 'slug' => (string)$article['slug'], 'status' => (string)$article['status']];
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('Article hard delete failed: ' . $e->getMessage());
+            return ['ok' => false, 'error' => 'حذف مقاله با خطا مواجه شد؛ هیچ تغییری اعمال نشد.'];
+        }
+    }
 }

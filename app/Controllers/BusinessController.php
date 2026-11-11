@@ -755,6 +755,10 @@ final class BusinessController
             DB::query("DELETE FROM business_sources WHERE business_id IN ({$delIn})", $delParams);
             DB::query("DELETE FROM business_contacts WHERE business_id IN ({$delIn})", $delParams);
             DB::query("DELETE FROM business_photos WHERE business_id IN ({$delIn})", $delParams);
+            // S20: دیدگاه‌های کاربران همین کسب‌وکار هم باید با حذف آن واقعاً از دیتابیس پاک شوند (بدون رکورد یتیم)
+            if (self::optionalTableExists('business_comments')) {
+                DB::query("DELETE FROM business_comments WHERE business_id IN ({$delIn})", $delParams);
+            }
 
             if (self::optionalTableExists('business_promotions')) {
                 DB::query("DELETE FROM business_promotions WHERE business_id IN ({$delIn})", $delParams);

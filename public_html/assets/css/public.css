@@ -2152,7 +2152,10 @@ a:hover {
   outline-offset: 1px;
   background: #fff;
 }
+.hx-star-widget { display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start; }
 .hx-star-row { display: flex; flex-direction: row-reverse; gap: 0.15rem; }
+/* S20: لیبل‌های ستاره نباید استایل لیبل متنی فرم‌ها (display:block / margin / bold) را بگیرند */
+.hx-star-row .hx-star { display: inline-flex; margin: 0; font-size: inherit; font-weight: 400; }
 .hx-star { cursor: pointer; display: inline-flex; padding: 0.1rem; }
 .hx-star input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .hx-star .hx-icon { width: 28px; height: 28px; stroke: var(--hx-slate-300); fill: transparent; transition: stroke 0.12s ease, fill 0.12s ease; }
@@ -2161,6 +2164,14 @@ a:hover {
 .hx-star input:checked ~ span .hx-icon { stroke: #f59e0b; fill: #f59e0b; }
 .hx-star input:checked ~ .hx-star .hx-icon { stroke: var(--hx-slate-300); fill: transparent; }
 .hx-star input:focus-visible + span .hx-icon { outline: 2px solid var(--hx-brand); outline-offset: 2px; }
+/* S20 — پرشدن واقعی ستاره‌ها تا انتخاب کاربر با کلاس‌های JS (hover برای پیش‌نمایش، is-on برای انتخاب نهایی) */
+.hx-star.is-hover .hx-icon { stroke: #fbbf24; fill: rgba(245, 158, 11, 0.35); }
+.hx-star.is-on .hx-icon { stroke: #f59e0b; fill: #f59e0b; }
+.hx-star.is-on:hover .hx-icon,
+.hx-star.is-on.is-hover .hx-icon { stroke: #d97706; fill: #d97706; }
+.hx-star-value { font-size: 0.78rem; font-weight: 700; color: var(--hx-slate-500); min-height: 1.4em; }
+.hx-star-value[data-active="1"] { color: #b45309; }
+.hx-star-value[data-active="0"] { color: var(--hx-slate-500); }
 .hx-comment-actions {
   display: flex;
   align-items: center;
@@ -2182,6 +2193,40 @@ a:hover {
   margin: 0 0 0.6rem;
 }
 .hx-comment-done p { font-size: 0.88rem; color: var(--hx-slate-600); line-height: 2; margin: 0 0 1.1rem; }
+
+/* S20 — فرم ثبت دیدگاه درون‌صفحه‌ای در صفحهٔ کسب‌وکار (بدون تب جدید) */
+.hx-inline-comment {
+  margin: 1.1rem 0 1.3rem;
+  box-shadow: 0 12px 36px -22px rgba(4, 8, 20, 0.32);
+  border: 1px solid var(--hx-brand-border);
+  background: #fff;
+}
+.hx-inline-comment[hidden] { display: none; }
+.hx-inline-comment h3 { margin: 0.2rem 0 0.3rem; font-size: 1.05rem; font-weight: 900; color: var(--hx-lapis-900); }
+.hx-inline-comment form { display: grid; gap: 0.9rem; }
+.hx-inline-comment label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: var(--hx-slate-700);
+  margin-bottom: 0.3rem;
+}
+.hx-inline-comment input[type="text"],
+.hx-inline-comment textarea {
+  width: 100%;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--hx-slate-300);
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  background: var(--hx-slate-50);
+}
+.hx-inline-comment input:focus,
+.hx-inline-comment textarea:focus {
+  outline: 2px solid var(--hx-brand);
+  outline-offset: 1px;
+  background: #fff;
+}
 
 /* ===== S19 — مودال درخواست تبلیغات + صفحهٔ اختصاصی /advertise ===== */
 .hx-modal { position: fixed; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; padding: 1rem; }
@@ -2206,14 +2251,16 @@ a:hover {
 }
 .hx-modal-close:hover { background: var(--hx-slate-100); }
 
-/* فرم تبلیغات (مشترک مودال و صفحهٔ اختصاصی) */
+/* فرم تبلیغات (مشترک مودال و صفحهٔ اختصاصی) — S20: هم‌سبک با فرم دیدگاه‌ها برای یکدستی اینپوت‌ها */
 .hx-ad-form label { display: block; margin: 0 0 0.8rem; font-size: 0.84rem; font-weight: 700; color: var(--hx-slate-700); }
 .hx-ad-form input[type="text"], .hx-ad-form input[type="tel"], .hx-ad-form textarea {
-  display: block; width: 100%; margin-top: 0.35rem; padding: 0.62rem 0.8rem;
-  border: 1px solid var(--hx-brand-border); border-radius: 10px;
-  font: inherit; font-size: 0.92rem; color: var(--hx-slate-700); background: #fff;
+  display: block; width: 100%; box-sizing: border-box; margin-top: 0.35rem; padding: 0.65rem 0.8rem;
+  border: 1px solid var(--hx-slate-300); border-radius: 10px;
+  font: inherit; font-size: 0.9rem; color: var(--hx-slate-700); background: var(--hx-slate-50);
+  appearance: none; -webkit-appearance: none;
 }
-.hx-ad-form input:focus-visible, .hx-ad-form textarea:focus-visible { outline: 2px solid var(--hx-brand); outline-offset: 1px; }
+.hx-ad-form textarea { resize: vertical; min-height: 6rem; }
+.hx-ad-form input:focus-visible, .hx-ad-form textarea:focus-visible { outline: 2px solid var(--hx-brand); outline-offset: 1px; background: #fff; }
 .hx-ad-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 0.9rem; }
 .hx-ad-consent { display: flex !important; align-items: flex-start; gap: 0.5rem; font-weight: 500 !important; font-size: 0.78rem !important; color: var(--hx-slate-600) !important; line-height: 1.9; }
 .hx-ad-consent input { margin-top: 0.35rem; width: auto !important; }

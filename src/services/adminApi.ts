@@ -862,6 +862,8 @@ export async function decideReviewQueueItems(ids:number[],decision:'approved'|'r
 }
 export async function fetchArticlesList(): Promise<{articles:ArticleItem[];schema_ready:boolean;article_tags_ready?:boolean;tag_catalog?:ArticleTopicTag[];rich_editor_available?:boolean}> { return request('/api/v1/articles', {cache:'no-store'}); }
 export async function saveArticleItem(payload:Partial<Omit<ArticleItem,'tags'>> & {tags?:string[]},csrf:string): Promise<any> { return action('/api/v1/articles',payload,csrf); }
+/** S20: حذف کامل مقاله از دیتابیس (فقط ادمین) — رکورد و همهٔ ردیف‌های وابسته واقعاً پاک می‌شوند. */
+export async function deleteArticleItem(id:number,csrf:string): Promise<any> { return action('/api/v1/articles/delete',{id},csrf); }
 export async function updateArticleSchema(csrf:string):Promise<any> { return action('/api/v1/system/update-article-schema',{},csrf); }
 export async function updateArticleTagsSchema(csrf:string):Promise<any> { return action('/api/v1/system/update-article-tags-schema',{},csrf); }
 export async function fetchArticleBusinesses(page:number, query:string, cityId:number, categoryId:number): Promise<{businesses:BusinessItem[];total:number;per_page:number}> {

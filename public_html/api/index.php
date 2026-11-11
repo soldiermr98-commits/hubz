@@ -106,6 +106,7 @@ $router->post('/api/v1/pipeline/benchmark-100', [ReviewQueueController::class, '
 $router->get('/api/v1/articles', [ArticleController::class, 'index']);
 $router->get('/api/v1/articles/preview/{id}', [PublicSiteController::class, 'articlePreview']);
 $router->post('/api/v1/articles', [ArticleController::class, 'storeOrUpdate']);
+$router->post('/api/v1/articles/delete', [ArticleController::class, 'destroy']);
 $router->post('/api/v1/articles/auto-build', [ArticleController::class, 'autoBuild']);
 $router->post('/api/v1/events/track', [PublicSiteController::class, 'trackEvent']);
 
@@ -180,6 +181,9 @@ $router->post('/api/v1/comments/moderate', [PublicSiteController::class, 'adminC
 
 // S19 — سوال امنیتی تازه برای مودال درخواست تبلیغات روی صفحات کش‌شده
 $router->get('/api/v1/public/ad-question', [PublicSiteController::class, 'adQuestion']);
+
+// S20 — سوال امنیتی تازه برای فرم دیدگاه درون‌صفحه‌ای روی صفحات کش‌شده
+$router->get('/api/v1/public/comment-question', [PublicSiteController::class, 'commentQuestion']);
 
 try {
     $router->dispatch($request);
