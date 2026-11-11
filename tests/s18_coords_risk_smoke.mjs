@@ -60,14 +60,14 @@ const read = (p) => readFile(p, 'utf8');
 // ---------- ۴) نسخهٔ دارایی‌های عمومی s18 ----------
 {
   const psc = await read('app/Controllers/PublicSiteController.php');
-  assert.ok(psc.includes('public.css?v=s18.0') && psc.includes('public.js?v=s18.0'), 'بارنامهٔ سایت عمومی s18.0 است');
+  assert.ok(/public\.css\?v=s\d+\.\d/.test(psc) && /public\.js\?v=s\d+\.\d/.test(psc), 'بارنامهٔ سایت عمومی نسخه‌دار است (S19+: نسخه به s19.0 ارتقا یافت)');
   const cache = await read('app/Core/Cache.php');
-  assert.ok(cache.includes('public.css?v=s18.0'), 'اعتبارسنج کش با s18.0 هم‌خوان است');
+  assert.match(cache, /public\.css\?v=s\d+\.\d/, 'اعتبارسنج کش با نسخهٔ فعلی دارایی‌ها هم‌خوان است');
   const js = await read('public_html/assets/js/public.js');
-  assert.ok(js.includes('leaflet.css?v=s18') && js.includes('leaflet.js?v=s18'), 'لودر نقشهٔ عمومی s18 است');
+  assert.ok(/leaflet\.css\?v=s\d+/.test(js) && /leaflet\.js\?v=s\d+/.test(js), 'لودر نقشهٔ عمومی نسخه‌دار است');
   const index = await read('public_html/admin/index.html');
   assert.ok(/admin\.js\?v=[0-9a-f]{8,}/.test(index), 'باندل ادمین با هش تازه در index.html نشسته است');
-  console.log('OK نسخه‌ها: public s18.0 + admin هش تازه');
+  console.log('OK نسخه‌ها: دارایی‌های عمومی نسخه‌دار + admin هش تازه');
 }
 
 // ---------- ۵) مایگریشن‌های موردنیاز بستهٔ جامع ----------

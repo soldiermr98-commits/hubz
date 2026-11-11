@@ -178,6 +178,9 @@ $router->post('/api/v1/public/comments', [PublicSiteController::class, 'submitCo
 $router->get('/api/v1/comments', [PublicSiteController::class, 'adminCommentsList']);
 $router->post('/api/v1/comments/moderate', [PublicSiteController::class, 'adminCommentsModerate']);
 
+// S19 — سوال امنیتی تازه برای مودال درخواست تبلیغات روی صفحات کش‌شده
+$router->get('/api/v1/public/ad-question', [PublicSiteController::class, 'adQuestion']);
+
 try {
     $router->dispatch($request);
 } catch (\Throwable $e) {

@@ -121,6 +121,11 @@ final class AdminMailService
         ];
         if (!isset($messages[$event])) return;
         try {
+            if (empty(self::state()['enabled'])) {
+                // S19: دلیل ردشدن بی‌صدا در لاگ سرور قابل تشخیص باشد (بدون هیچ داده حساس).
+                error_log('Admin mail notification skipped: notifications disabled in settings.');
+                return;
+            }
             self::send($messages[$event][0], $messages[$event][1]);
         } catch (Throwable $e) {
             // The submitted record remains saved even if mail is unavailable. No sensitive details in logs.

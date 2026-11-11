@@ -349,7 +349,7 @@ final class PublicSiteController
                 <h2>کسب‌وکار شما در برترین‌های گیلان دیده شود</h2>
                 <p>صفحات شهر و دسته‌بندی حامی‌هاب روزانه بازدید واقعی دارند؛ کسب‌وکار شما را در اولین انتخاب کاربر قرار دهید.</p>
                 <div class="hx-cta-actions">
-                    <a class="hx-btn hx-btn-primary hx-btn-lg" href="#advertise">درخواست تبلیغات در حامی‌هاب <?= self::icon('arrow-left', 'hx-icon hx-icon-sm') ?></a>
+                    <a class="hx-btn hx-btn-primary hx-btn-lg" href="/advertise" data-hx-ad-modal>درخواست تبلیغات در حامی‌هاب <?= self::icon('arrow-left', 'hx-icon hx-icon-sm') ?></a>
                     <a class="hx-btn hx-btn-ghost-light hx-btn-lg" href="#city-hubs">مشاهده صفحات شهرها</a>
                 </div>
             </section>
@@ -2530,6 +2530,122 @@ final class PublicSiteController
     }
 
     /**
+     * S19: سوال امنیتی تازه برای مودال درخواست تبلیغات روی صفحات کش‌شده — GET /api/v1/public/ad-question
+     * صفحات کش‌شده نباید سوال امضاشده با TTL در خود داشته باشند؛ مودال سوال را هنگام باز شدن می‌گیرد.
+     */
+    public static function adQuestion(Request $req, array $params = []): void
+    {
+        header('Cache-Control: no-store, max-age=0');
+        if (Auth::isRateLimited('@public-adq', $req->ip())) {
+            Response::json(['ok' => false, 'error' => 'درخواست‌ها زیاد است؛ کمی بعد تلاش کنید.'], 429);
+            return;
+        }
+        try {
+            $question = CommentService::generateQuestion(0);
+        } catch (Throwable $e) {
+            error_log('HX ad-question failed: ' . $e->getMessage());
+            Response::json(['ok' => false, 'error' => 'ساخت سوال امنیتی ممکن نشد؛ دوباره تلاش کنید.'], 500);
+            return;
+        }
+        Response::json(['ok' => true, 'question' => [
+            'a' => (int)$question['a'], 'b' => (int)$question['b'], 'ts' => (int)$question['ts'],
+            'sig' => (string)$question['sig'], 'label' => (string)$question['label'],
+        ]]);
+    }
+
+    /** S19: بدنهٔ مشترک فرم درخواست تبلیغات (صفحهٔ اختصاصی + مودال). $question=null یعنی سوال با جاوااسکریپت هنگام باز شدن پر می‌شود. */
+    private static function adFormInner(?array $question): string
+    {
+        $qa = (int)($question['a'] ?? 0);
+        $qb = (int)($question['b'] ?? 0);
+        $qts = (int)($question['ts'] ?? 0);
+        $qsig = self::e((string)($question['sig'] ?? ''));
+        $qLabelHtml = $question !== null
+            ? 'سوال امنیتی: ' . self::e((string)$question['label']) . ' *'
+            : '<span data-hx-ad-q-label>سوال امنیتی در حال آماده‌سازی…</span>';
+        return '<div class="hx-ad-honeypot" aria-hidden="true"><label>Website <input name="website_hp" tabindex="-1" autocomplete="off"></label></div>'
+            . '<input type="hidden" name="hx_a" value="' . $qa . '">'
+            . '<input type="hidden" name="hx_b" value="' . $qb . '">'
+            . '<input type="hidden" name="hx_ts" value="' . $qts . '">'
+            . '<input type="hidden" name="hx_sig" value="' . $qsig . '">'
+            . '<div class="hx-ad-grid">'
+            . '<label>نام و نام خانوادگی *<input name="name" required maxlength="150" autocomplete="name" placeholder="مثلاً: رضا کریمی"></label>'
+            . '<label>شماره تماس *<input name="phone" type="tel" required maxlength="32" autocomplete="tel" dir="ltr" inputmode="tel" placeholder="09xxxxxxxxx"></label>'
+            . '</div>'
+            . '<label>پیام شما (اختیاری)<textarea name="message" maxlength="1000" rows="4" placeholder="نوع کسب‌وکار، جایگاه مدنظر (بنر، جایگاه ویژه، معرفی اختصاصی) و بازهٔ زمانی…"></textarea></label>'
+            . '<label>' . $qLabelHtml . '<input type="text" name="answer" required maxlength="4" inputmode="numeric" placeholder="پاسخ عددی" dir="ltr"></label>'
+            . '<label class="hx-ad-consent"><input type="checkbox" name="consent" required> با ثبت اطلاعات بالا برای پیگیری درخواست تبلیغات موافقم.</label>'
+            . '<button type="submit" class="hx-btn hx-btn-primary hx-btn-lg">ارسال درخواست تبلیغات</button>'
+            . '<p data-hx-form-msg role="status" aria-live="polite"></p>';
+    }
+
+    /**
+     * S19: صفحهٔ اختصاصی تبلیغات — GET /advertise
+     * صفحه پویاست و کش نمی‌شود؛ سوال امنیتی سمت سرور تازه ساخته می‌شود و فرم بدون جاوااسکریپت هم کار می‌کند.
+     */
+    public static function advertisePage(Request $req, array $params = []): void
+    {
+        if (!AdvertisingService::schemaReady()) {
+            self::render404('این بخش در حال حاضر فعال نیست.');
+            return;
+        }
+        $question = CommentService::generateQuestion(0);
+        $baseUrl = self::baseUrl();
+        ob_start();
+        ?>
+        <main class="hx-advert-page">
+            <section class="hx-container hx-advert-hero">
+                <span class="hx-cta-badge">
+                    <?= self::icon('announce', 'hx-icon hx-icon-sm') ?>
+                    <span>تبلیغات در حامی‌هاب گیلان</span>
+                </span>
+                <h1>کسب‌وکار شما، دقیقاً وقتی مشتری در حال انتخاب است دیده می‌شود</h1>
+                <p>حامی‌هاب مرجع معرفی کسب‌وکارهای استان گیلان است؛ کاربر پیش از انتخاب کافه، رستوران یا مرکز خدمات، صفحات شهر و دسته‌بندی را می‌بیند. فرم زیر را پر کنید تا تیم ما برای پیشنهاد جایگاه مناسب و جزئیات همکاری با شما تماس بگیرد.</p>
+            </section>
+            <section class="hx-container hx-advert-benefits" aria-label="چرا تبلیغ در حامی‌هاب">
+                <div class="hx-advert-benefit">
+                    <?= self::icon('location', 'hx-icon') ?>
+                    <h2>مخاطب محلی و واقعی</h2>
+                    <p>بازدیدکنندگان حامی‌هاب همان کسانی هستند که همین حالا در رشت، انزلی، لاهیجان و شهرهای گیلان در حال انتخاب هستند.</p>
+                </div>
+                <div class="hx-advert-benefit">
+                    <?= self::icon('announce', 'hx-icon') ?>
+                    <h2>شکل‌های متنوع دیده‌شدن</h2>
+                    <p>بنر صفحات شهر و دسته‌بندی، جایگاه ویژه در فهرست‌ها و معرفی اختصاصی؛ متناسب با هدف شما پیشنهاد می‌شود.</p>
+                </div>
+                <div class="hx-advert-benefit">
+                    <?= self::icon('message-question', 'hx-icon') ?>
+                    <h2>شروع ساده و شفاف</h2>
+                    <p>درخواست را ثبت کنید؛ تماس می‌گیریم، جایگاه و جزئیات را دقیق توضیح می‌دهیم و پس از تأیید شما منتشر می‌شود.</p>
+                </div>
+                <div class="hx-advert-benefit">
+                    <?= self::icon('tick-circle', 'hx-icon') ?>
+                    <h2>پیگیری با آمار</h2>
+                    <p>پس از انتشار، نمایش و کلیک بنر شما در پنل ثبت می‌شود تا اثر تبلیغ قابل بررسی باشد.</p>
+                </div>
+            </section>
+            <section class="hx-container hx-advert-formwrap" id="advertise-form">
+                <h2>فرم درخواست تبلیغات</h2>
+                <p class="hx-advert-formhint">کمتر از یک دقیقه؛ فقط نام، شماره تماس و در صورت تمایل یک پیام کوتاه.</p>
+                <form class="hx-ad-form" data-hx-public-form="advertising" action="/api/v1/public/advertising-inquiry" method="post">
+                    <?= self::adFormInner($question) ?>
+                </form>
+            </section>
+        </main>
+        <?php
+        $bodyHtml = (string)ob_get_clean();
+
+        Response::html(self::renderLayout([
+            'title'       => 'تبلیغات در حامی‌هاب گیلان | بنر، جایگاه ویژه و معرفی اختصاصی',
+            'description' => 'درخواست تبلیغ در حامی‌هاب: بنر صفحات شهر و دسته‌بندی، جایگاه ویژه در فهرست‌ها و معرفی اختصاصی کسب‌وکار شما در استان گیلان؛ ثبت سریع درخواست و پیگیری تلفنی.',
+            'canonical'   => $baseUrl . '/advertise',
+            'og_type'     => 'website',
+            'ad_placement'=> '',
+            'body'        => $bodyHtml,
+        ]));
+    }
+
+    /**
      * POST /api/v1/system/cron-run — اجرای دستی ورکر ۵ دقیقه‌ای S6 از داخل پنل مدیریت بدون نیاز به SSH
      */
     public static function runCronMaintenance(Request $req, array $params = []): void
@@ -2769,7 +2885,7 @@ final class PublicSiteController
     <meta name="twitter:image" content="<?= self::e($baseUrl) ?>/assets/img/logo-hx-card.webp">
     <link rel="preload" href="/assets/fonts/Vazirmatn-Regular.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/assets/fonts/Vazirmatn-Bold.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="/assets/css/public.css?v=s18.0">
+    <link rel="stylesheet" href="/assets/css/public.css?v=s19.0">
     <!-- hhx-ad-until:<?= $adUntil ?> -->
     <!-- hhx-sponsor-until:<?= max(0, (int)($data['sponsor_until'] ?? 0)) ?> -->
     <?php foreach ($schemas as $schema):
@@ -2797,7 +2913,7 @@ final class PublicSiteController
                 <a href="/city/lahijan/">لاهیجان</a>
             </nav>
             <div class="hx-header-actions">
-                <a href="/#advertise" class="hx-nav-cta">
+                <a href="/advertise" class="hx-nav-cta" data-hx-ad-modal>
                     <?= self::icon('announce', 'hx-icon hx-icon-sm') ?>
                     <span>درخواست تبلیغات</span>
                 </a>
@@ -2826,7 +2942,7 @@ final class PublicSiteController
                 <a href="/city/rasht/">بهترین‌های رشت</a>
                 <a href="/city/bandar-anzali/">بهترین‌های بندر انزلی</a>
                 <a href="/city/lahijan/">بهترین‌های لاهیجان</a>
-                <a href="#advertise">درخواست تبلیغات</a>
+                <a href="/advertise" data-hx-ad-modal>درخواست تبلیغات</a>
             </nav>
             <div class="hx-footer-col">
                 <h3>داده و استناد</h3>
@@ -2835,29 +2951,42 @@ final class PublicSiteController
             </div>
         </div>
         <?php if ($advertisingReady): ?>
-        <div class="hx-container">
-        <details class="hx-ad-contact" id="advertise">
-            <summary>درخواست تبلیغات در حامی‌هاب</summary>
-            <p>برای بررسی جایگاه و بنر، درخواست خود را بفرستید. نام، شماره تماس و پیام فقط برای پیگیری درخواست در پنل مدیر نگهداری می‌شود.</p>
-            <form data-hx-public-form="advertising" action="/api/v1/public/advertising-inquiry" method="post">
-                <label>نام <input name="name" required maxlength="150" autocomplete="name"></label>
-                <label>شماره تماس <input name="phone" type="tel" required maxlength="32" autocomplete="tel" dir="ltr"></label>
-                <label>پیام (اختیاری) <textarea name="message" maxlength="1000" rows="3"></textarea></label>
-                <label class="hx-ad-consent"><input type="checkbox" name="consent" required> با ثبت اطلاعات بالا برای پیگیری درخواست تبلیغات موافقم.</label>
-                <div class="hx-ad-honeypot" aria-hidden="true"><label>Website <input name="website_hp" tabindex="-1" autocomplete="off"></label></div>
-                <button type="submit" class="hx-btn">ارسال درخواست تبلیغات</button>
-                <p data-hx-form-msg role="status" aria-live="polite"></p>
-                <noscript>برای ارسال امن فرم، جاوااسکریپت را فعال کنید.</noscript>
-            </form>
-        </details>
+        <div class="hx-container" id="advertise">
+            <button type="button" class="hx-ad-cta-card" data-hx-ad-modal>
+                <span class="hx-ad-cta-top">
+                    <span class="hx-ad-cta-badge"><?= self::icon('announce', 'hx-icon hx-icon-sm') ?><span>جایگاه ویژه · بنر · معرفی اختصاصی</span></span>
+                    <span class="hx-ad-cta-open">باز کردن فرم <?= self::icon('arrow-left', 'hx-icon hx-icon-sm') ?></span>
+                </span>
+                <strong class="hx-ad-cta-title">کسب‌وکار خود را در برترین‌های گیلان دیده کنید</strong>
+                <span class="hx-ad-cta-hint">فرم درخواست در یک پنجرهٔ سریع باز می‌شود؛ نام، شماره تماس و پیام شما فقط برای پیگیری درخواست در پنل مدیر نگهداری می‌شود.</span>
+            </button>
+            <noscript><p class="hx-ad-cta-noscript"><a class="hx-btn hx-btn-outline" href="/advertise">رفتن به فرم درخواست تبلیغات</a></p></noscript>
         </div>
         <?php endif; ?>
     </footer>
+    <?php if ($advertisingReady): ?>
+    <div class="hx-modal" id="hx-ad-modal" hidden>
+        <div class="hx-modal-overlay" data-hx-ad-close></div>
+        <div class="hx-modal-panel" role="dialog" aria-modal="true" aria-labelledby="hx-ad-modal-title">
+            <button type="button" class="hx-modal-close" data-hx-ad-close aria-label="بستن پنجره">&times;</button>
+            <h2 id="hx-ad-modal-title">درخواست تبلیغات در حامی‌هاب</h2>
+            <p class="hx-modal-sub">نام، شماره تماس و پیام شما فقط برای پیگیری درخواست در پنل مدیر نگهداری می‌شود.</p>
+            <form class="hx-ad-form" data-hx-public-form="advertising" action="/api/v1/public/advertising-inquiry" method="post">
+                <?= self::adFormInner(null) ?>
+            </form>
+            <div class="hx-ad-done" data-hx-ad-done hidden>
+                <?= self::icon('tick-circle', 'hx-icon') ?>
+                <strong>درخواست شما ثبت شد</strong>
+                <p>تیم حامی‌هاب برای پیگیری با شما تماس می‌گیرد؛ این پنجره خودکار بسته می‌شود.</p>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
     <button type="button" class="hx-back-top" data-hx-back-top aria-label="بازگشت به بالای صفحه" hidden>
         <?= self::icon('arrow-up', 'hx-icon') ?>
         <span class="hx-visually-hidden">بازگشت به بالا</span>
     </button>
-    <script src="/assets/js/public.js?v=s18.0" defer></script>
+    <script src="/assets/js/public.js?v=s19.0" defer></script>
 </body>
 </html>
         <?php

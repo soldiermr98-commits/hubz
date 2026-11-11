@@ -205,6 +205,14 @@ final class AdvertisingController
         if (self::text($request, 'website_hp') !== '') Response::json(['ok'=>false, 'error'=>'درخواست پذیرفته نشد.'], 422);
         if (Auth::isRateLimited('@public-advertising', $request->ip())) Response::json(['ok'=>false, 'error'=>'تعداد درخواست‌ها بیش از حد مجاز است؛ بعداً تلاش کنید.'], 429);
         Auth::recordAttempt('@public-advertising', $request->ip(), false);
+        // S19: سوال امنیتی امضاشده (همان سازوکار دیدگاه‌ها) — سپر دوم ضد اسپم پس از honeypot و محدودیت نرخ
+        if (!\App\Services\CommentService::verifyQuestion(
+            (string)$request->input('hx_a', ''), (string)$request->input('hx_b', ''),
+            (string)$request->input('hx_ts', ''), (string)$request->input('hx_sig', ''),
+            (string)$request->input('answer', '')
+        )) {
+            Response::json(['ok'=>false, 'error'=>'پاسخ سوال امنیتی درست نیست یا منقضی شده است؛ فرم را ببندید و دوباره باز کنید.'], 422);
+        }
         $name = Normalizer::cleanPersianText(self::text($request, 'name'));
         $phone = Normalizer::normalizePhone(self::text($request, 'phone'));
         $message = Normalizer::cleanPersianText(self::text($request, 'message'));

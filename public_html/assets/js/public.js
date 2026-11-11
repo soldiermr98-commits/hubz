@@ -23,11 +23,11 @@
 
     var link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/assets/vendor/leaflet/leaflet.css?v=s18';
+    link.href = '/assets/vendor/leaflet/leaflet.css?v=s19';
     document.head.appendChild(link);
 
     var script = document.createElement('script');
-    script.src = '/assets/vendor/leaflet/leaflet.js?v=s18';
+    script.src = '/assets/vendor/leaflet/leaflet.js?v=s19';
     script.async = true;
     script.onload = function () {
       leafletLoaded = true;
@@ -262,6 +262,12 @@
           if (formType === 'comment') {
             try { document.dispatchEvent(new CustomEvent('hx:comment-success')); } catch (e) {}
           }
+          if (formType === 'advertising') {
+            try { document.dispatchEvent(new CustomEvent('hx:ad-success')); } catch (e) {}
+          }
+        } else if (formType === 'advertising' && String(res.error || '').indexOf('امنیتی') !== -1) {
+          // S19: سوال منقضی/نادرست — سوال تازه برای مودال گرفته شود
+          try { document.dispatchEvent(new CustomEvent('hx:ad-refresh-question')); } catch (e) {}
         }
       })
       .catch(function () {
@@ -322,5 +328,82 @@
       });
     }, { rootMargin: '-25% 0px -60% 0px', threshold: 0 });
     sections.forEach(function (pair) { observer.observe(pair.sec); });
+  })();
+
+  // S19 — مودال ریسپانسیو درخواست تبلیغات؛ سوال امنیتی تازه هنگام باز شدن گرفته می‌شود (سازگار با صفحات کش‌شده)
+  (function () {
+    var modal = document.getElementById('hx-ad-modal');
+    if (!modal) return;
+    var lastFocus = null;
+    var questionLoaded = false;
+    var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function fillQuestion() {
+      var form = modal.querySelector('form[data-hx-public-form="advertising"]');
+      if (!form) return;
+      fetch('/api/v1/public/ad-question', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (!res || !res.ok || !res.question) return;
+          var qa = form.querySelector('[name="hx_a"]');
+          var qb = form.querySelector('[name="hx_b"]');
+          var qt = form.querySelector('[name="hx_ts"]');
+          var qs = form.querySelector('[name="hx_sig"]');
+          if (qa) qa.value = res.question.a;
+          if (qb) qb.value = res.question.b;
+          if (qt) qt.value = res.question.ts;
+          if (qs) qs.value = res.question.sig;
+          var label = modal.querySelector('[data-hx-ad-q-label]');
+          if (label) label.textContent = 'سوال امنیتی: ' + res.question.label + ' *';
+          questionLoaded = true;
+        })
+        .catch(function () {});
+    }
+
+    function openModal() {
+      lastFocus = document.activeElement;
+      modal.removeAttribute('hidden');
+      document.documentElement.style.overflow = 'hidden';
+      if (!questionLoaded) fillQuestion();
+      var first = modal.querySelector('input[name="name"]');
+      if (first) { try { first.focus({ preventScroll: reduceMotion }); } catch (e) { try { first.focus(); } catch (e2) {} } }
+    }
+
+    function closeModal() {
+      if (modal.hasAttribute('hidden')) return;
+      modal.setAttribute('hidden', '');
+      document.documentElement.style.overflow = '';
+      if (lastFocus && typeof lastFocus.focus === 'function') { try { lastFocus.focus({ preventScroll: reduceMotion }); } catch (e) { try { lastFocus.focus(); } catch (e2) {} } }
+    }
+
+    document.addEventListener('click', function (ev) {
+      var target = ev.target;
+      if (!target || !target.closest) return;
+      var opener = target.closest('[data-hx-ad-modal]');
+      if (opener) { ev.preventDefault(); openModal(); return; }
+      if (!modal.hasAttribute('hidden') && target.closest('[data-hx-ad-close]')) { ev.preventDefault(); closeModal(); }
+    });
+
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && !modal.hasAttribute('hidden')) closeModal();
+    });
+
+    document.addEventListener('hx:ad-refresh-question', function () {
+      questionLoaded = false;
+      fillQuestion();
+    });
+
+    document.addEventListener('hx:ad-success', function () {
+      var form = modal.querySelector('form[data-hx-public-form="advertising"]');
+      var done = modal.querySelector('[data-hx-ad-done]');
+      if (form) form.style.display = 'none';
+      if (done) done.removeAttribute('hidden');
+      setTimeout(function () {
+        closeModal();
+        if (done) done.setAttribute('hidden', '');
+        if (form) form.style.display = '';
+        questionLoaded = false; // سوال دفعهٔ بعد تازه باشد
+      }, reduceMotion ? 900 : 2600);
+    });
   })();
 })();

@@ -123,6 +123,7 @@ $router = new Router();
 $router->get('/', [PublicSiteController::class, 'home']);
 $router->get('/search', [PublicSiteController::class, 'searchPage']);
 $router->get('/businesses', [PublicSiteController::class, 'businessesCatalog']);
+$router->get('/advertise', [PublicSiteController::class, 'advertisePage']); // S19: قبل از catch-all های /{slug}
 $router->get('/comment/{city}/{slug}', [PublicSiteController::class, 'commentPage']);
 $router->get('/sitemap.xml', [PublicSiteController::class, 'sitemapXml']);
 $router->get('/robots.txt', [PublicSiteController::class, 'robotsTxt']);

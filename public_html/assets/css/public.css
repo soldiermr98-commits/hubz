@@ -2183,6 +2183,90 @@ a:hover {
 }
 .hx-comment-done p { font-size: 0.88rem; color: var(--hx-slate-600); line-height: 2; margin: 0 0 1.1rem; }
 
+/* ===== S19 — مودال درخواست تبلیغات + صفحهٔ اختصاصی /advertise ===== */
+.hx-modal { position: fixed; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+.hx-modal[hidden] { display: none; }
+.hx-modal-overlay { position: absolute; inset: 0; background: rgba(4, 8, 20, 0.62); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
+.hx-modal-panel {
+  position: relative; z-index: 1; width: 100%; max-width: 540px;
+  max-height: 92vh; max-height: min(92dvh, 760px); overflow: auto;
+  background: #fff; border-radius: 18px; padding: 1.5rem 1.4rem 1.6rem;
+  box-shadow: 0 24px 64px rgba(4, 8, 20, 0.38);
+  animation: hx-modal-in 0.22s ease-out;
+}
+@keyframes hx-modal-in { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
+.hx-modal-panel > h2 { margin: 0 0 0.35rem; font-size: 1.2rem; font-weight: 900; color: var(--hx-lapis-900); }
+.hx-modal-sub { margin: 0 0 1rem; font-size: 0.8rem; color: var(--hx-slate-600); line-height: 1.9; }
+.hx-modal-close {
+  position: absolute; top: 0.7rem; left: 0.7rem; width: 2.1rem; height: 2.1rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--hx-brand-border); border-radius: 50%;
+  background: var(--hx-slate-50); color: var(--hx-slate-700);
+  font-size: 1.25rem; line-height: 1; cursor: pointer; padding: 0;
+}
+.hx-modal-close:hover { background: var(--hx-slate-100); }
+
+/* فرم تبلیغات (مشترک مودال و صفحهٔ اختصاصی) */
+.hx-ad-form label { display: block; margin: 0 0 0.8rem; font-size: 0.84rem; font-weight: 700; color: var(--hx-slate-700); }
+.hx-ad-form input[type="text"], .hx-ad-form input[type="tel"], .hx-ad-form textarea {
+  display: block; width: 100%; margin-top: 0.35rem; padding: 0.62rem 0.8rem;
+  border: 1px solid var(--hx-brand-border); border-radius: 10px;
+  font: inherit; font-size: 0.92rem; color: var(--hx-slate-700); background: #fff;
+}
+.hx-ad-form input:focus-visible, .hx-ad-form textarea:focus-visible { outline: 2px solid var(--hx-brand); outline-offset: 1px; }
+.hx-ad-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 0.9rem; }
+.hx-ad-consent { display: flex !important; align-items: flex-start; gap: 0.5rem; font-weight: 500 !important; font-size: 0.78rem !important; color: var(--hx-slate-600) !important; line-height: 1.9; }
+.hx-ad-consent input { margin-top: 0.35rem; width: auto !important; }
+.hx-ad-form .hx-btn { margin-top: 0.4rem; }
+.hx-ad-form [data-hx-form-msg] { font-size: 0.84rem; font-weight: 700; color: var(--hx-slate-600); margin: 0.4rem 0 0; }
+.hx-ad-done { text-align: center; padding: 1.2rem 0.4rem 0.4rem; color: var(--hx-slate-700); }
+.hx-ad-done .hx-icon { width: 2rem; height: 2rem; color: #0f7a48; }
+.hx-ad-done strong { display: block; margin-top: 0.5rem; font-size: 1.05rem; color: #0f7a48; }
+.hx-ad-done p { margin: 0.5rem 0 0; font-size: 0.85rem; color: var(--hx-slate-600); line-height: 2; }
+
+/* کارت CTA فوتر (جایگزین details قدیمی) — داخل فوتر تیره */
+.hx-ad-cta-card {
+  display: block; width: 100%; text-align: right; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 16px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  color: #fff; padding: 1.1rem 1.2rem;
+  transition: border-color 0.18s ease, transform 0.18s ease;
+  font: inherit;
+}
+.hx-ad-cta-card:hover { border-color: rgba(255, 255, 255, 0.42); transform: translateY(-2px); }
+.hx-ad-cta-top { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.55rem; flex-wrap: wrap; }
+.hx-ad-cta-badge { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.74rem; font-weight: 800; color: #7dd3fc; }
+.hx-ad-cta-open { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.78rem; font-weight: 800; color: #fff; }
+.hx-ad-cta-title { display: block; font-size: 1.02rem; font-weight: 900; color: #fff; }
+.hx-ad-cta-hint { display: block; margin-top: 0.35rem; font-size: 0.76rem; line-height: 1.9; color: rgba(255, 255, 255, 0.72); }
+.hx-ad-cta-noscript { margin: 0.7rem 0 0; }
+
+/* صفحهٔ اختصاصی /advertise */
+.hx-advert-page { padding-bottom: 1rem; }
+.hx-advert-hero { padding: 2.6rem 1rem 1.6rem; text-align: center; max-width: 860px; }
+.hx-advert-hero .hx-cta-badge { background: var(--hx-brand-light); border-color: var(--hx-brand-border); color: var(--hx-brand-dark); }
+.hx-advert-hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 900; color: var(--hx-lapis-900); margin: 0.9rem 0 0.8rem; line-height: 1.6; }
+.hx-advert-hero p { margin: 0 auto; max-width: 720px; font-size: 0.95rem; line-height: 2.1; color: var(--hx-slate-600); }
+.hx-advert-benefits { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.9rem; padding: 0.6rem 1rem 1.4rem; max-width: 1060px; margin: 0 auto; }
+.hx-advert-benefit { border: 1px solid var(--hx-brand-border); border-radius: 16px; background: #fff; padding: 1.1rem 1.1rem 1.2rem; }
+.hx-advert-benefit .hx-icon { width: 1.5rem; height: 1.5rem; color: var(--hx-brand); }
+.hx-advert-benefit h2 { margin: 0.6rem 0 0.4rem; font-size: 0.98rem; font-weight: 900; color: var(--hx-lapis-900); }
+.hx-advert-benefit p { margin: 0; font-size: 0.82rem; line-height: 2; color: var(--hx-slate-600); }
+.hx-advert-formwrap { max-width: 640px; margin: 0 auto 3rem; padding: 1.4rem 1rem 1.6rem; border: 1px solid var(--hx-brand-border); border-radius: 18px; background: #fff; box-shadow: 0 12px 40px rgba(4, 8, 20, 0.06); }
+.hx-advert-formwrap h2 { margin: 0 0 0.3rem; font-size: 1.15rem; font-weight: 900; color: var(--hx-lapis-900); }
+.hx-advert-formhint { margin: 0 0 1.1rem; font-size: 0.8rem; color: var(--hx-slate-500); }
+
+@media (max-width: 640px) {
+  .hx-modal { padding: 0; align-items: flex-end; }
+  .hx-modal-panel { max-width: none; border-radius: 18px 18px 0 0; max-height: 94vh; max-height: 94dvh; padding-bottom: 2rem; }
+  .hx-ad-grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hx-modal-panel { animation: none; }
+  .hx-ad-cta-card { transition: none; }
+  .hx-ad-cta-card:hover { transform: none; }
+}
+
 @media print {
   .hx-detail-side, .hx-subnav, .hx-detail-gallery .hx-gallery-more { display: none !important; }
   .hx-detail-grid-main { grid-template-columns: 1fr; }
