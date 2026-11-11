@@ -24,6 +24,7 @@ import {
   deleteBusinesses,
   fetchArticleBusinesses,
   fetchBusinessesPage,
+  fetchCoordsRiskTotal,
   formatBytesFa,
   publishSavedBusiness,
   normalizeIranPhone,
@@ -59,6 +60,9 @@ export const BusinessesManagerView: React.FC<BusinessesManagerViewProps> = ({
   const [cityFilter, setCityFilter] = useState<number>(0);
   const [qualityFilter, setQualityFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  // S18: گزارش مختصات پرریسک — فهرست نقاط مرکز پلی‌گون OSM که دستی تأیید نشده‌اند
+  const [coordsRiskOnly, setCoordsRiskOnly] = useState(false);
+  const [riskTotal, setRiskTotal] = useState<number | null>(null);
   const [publishIntent, setPublishIntent] = useState(false);
   const [reviewReady, setReviewReady] = useState(false);
   const [reviewTarget, setReviewTarget] = useState<BusinessItem|null>(null);
@@ -202,12 +206,22 @@ export const BusinessesManagerView: React.FC<BusinessesManagerViewProps> = ({
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
-        const data = await fetchBusinessesPage(page, cityFilter, searchQuery, qualityFilter, statusFilter);
+        const data = await fetchBusinessesPage(page, cityFilter, searchQuery, qualityFilter, statusFilter, coordsRiskOnly ? '1' : '');
         if (!cancelled) { setPageBusinesses(data.businesses); setTotal(data.total); setReviewReady(!!data.data_review_schema_ready); setListError(''); }
       } catch (e) { if (!cancelled) { setPageBusinesses([]); setListError(e instanceof Error ? e.message : 'خطا در دریافت فهرست'); } }
     }, 200);
     return () => {cancelled=true;window.clearTimeout(timer);};
-  }, [mode, page, cityFilter, searchQuery, qualityFilter, statusFilter, refreshList]);
+  }, [mode, page, cityFilter, searchQuery, qualityFilter, statusFilter, coordsRiskOnly, refreshList]);
+  // S18: شمارندهٔ گزارش پرریسک برای کارت بالای فهرست (مستقل از فیلترها)
+  useEffect(() => {
+    if (mode !== 'list') return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try { const t = await fetchCoordsRiskTotal(); if (!cancelled) setRiskTotal(t); }
+      catch { if (!cancelled) setRiskTotal(null); }
+    }, 400);
+    return () => {cancelled=true;window.clearTimeout(timer);};
+  }, [mode, refreshList]);
 
   const togglePromotion = async (biz:BusinessItem) => {
     setPromotionBusy(biz.id);setListError('');
@@ -374,7 +388,7 @@ export const BusinessesManagerView: React.FC<BusinessesManagerViewProps> = ({
       if (!w.__hhxPickerPromise) {
         w.__hhxPickerPromise = new Promise<void>((resolve, reject) => {
           const s = document.createElement('script');
-          s.src = '/assets/vendor/leaflet/hhx-picker.js?v=s17';
+          s.src = '/assets/vendor/leaflet/hhx-picker.js?v=s18';
           s.async = true;
           s.onload = () => resolve();
           s.onerror = () => reject(new Error('picker script failed'));
@@ -628,6 +642,32 @@ export const BusinessesManagerView: React.FC<BusinessesManagerViewProps> = ({
           <label className="block text-sm mb-4">اولویت تکمیل اطلاعات <select aria-label="فیلتر کیفیت اطلاعات" value={qualityFilter} onChange={e=>{setPage(1);setReviewTarget(null);setQualityFilter(e.target.value);}} className="mr-2 px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg">
             <option value="">همه کسب‌وکارها</option><option value="incomplete">هر نقص در اطلاعات اصلی</option><option value="photo">بدون عکس قابل انتخاب</option><option value="description">بدون توضیح</option><option value="phone">بدون شماره تماس</option><option value="category">بدون دسته معتبر</option><option value="address">بدون آدرس</option><option value="unreviewed">بازبینی ثبت‌نشده یا قدیمی</option>
           </select></label>
+          {/* S18: کارت گزارش مختصات پرریسک — نقاط مرکز پلی‌گون OSM که دستی تأیید نشده‌اند */}
+          {riskTotal !== null && (
+            <div className="mb-4 p-4 rounded-lg border border-amber-300 bg-amber-50" aria-label="گزارش مختصات پرریسک مرکز پلی‌گون OSM">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="text-sm min-w-0">
+                  <p className="font-bold text-amber-900 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    مختصات پرریسک — مرکز پلی‌گون OSM ({riskTotal.toLocaleString('fa-IR')} مورد)
+                  </p>
+                  <p className="text-xs leading-6 text-amber-800 mt-1">
+                    نقطهٔ این کسب‌وکارها از «مرکز هندسی پلی‌گون OSM» (way/relation) درآمده و هنوز دستی تأیید نشده؛ پین ممکن است وسط ساختمان یا زمین بیفتد، نه محل دقیق مغازه — همان علت ناهماهنگی با گوگل‌مپ. با «ویرایش» بازش کنید و با «Paste سریع لینک گوگل‌مپ» یا کشیدن پین روی نقشه، نقطه را اصلاح و ذخیره کنید؛ بعد از ذخیره، خودکار از این گزارش خارج می‌شوند.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setPage(1); setReviewTarget(null); setCoordsRiskOnly((v) => !v); }}
+                  aria-pressed={coordsRiskOnly}
+                  className={coordsRiskOnly
+                    ? 'inline-flex items-center gap-2 px-4 py-2.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0'
+                    : 'inline-flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0'}
+                >
+                  {coordsRiskOnly ? 'خروج از گزارش پرریسک' : 'نمایش فهرست اصلاح مختصات'}
+                </button>
+              </div>
+            </div>
+          )}
           {!reviewReady&&<p className="text-xs text-amber-800 bg-amber-50 p-3 mb-4 rounded">برای ثبت نتیجه بازبینی، مدیر باید پس از پشتیبان‌گیری جدول‌های بخش جدید را در تنظیمات یا تبلیغات آماده کند. فیلترهای نقص همچنان کار می‌کنند.</p>}
           {listError && <p role="alert" className="text-sm text-rose-800 bg-rose-50 p-3 mb-4 rounded">{listError}</p>}
 
@@ -732,6 +772,13 @@ export const BusinessesManagerView: React.FC<BusinessesManagerViewProps> = ({
                       <div className="font-mono text-xs text-slate-500 mt-0.5" dir="ltr">
                         /{biz.city_slug || 'city'}/{biz.slug}/
                       </div>
+                      {coordsRiskOnly && (
+                        <div className="mt-1.5 text-xs">
+                          <span className="inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold">مرکز پلی‌گون OSM</span>
+                          {biz.osm_source_id ? <span className="font-mono text-slate-500 mr-1.5" dir="ltr">{biz.osm_source_id}</span> : null}
+                          <span className="text-slate-500 mr-1.5">منبع مختصات: {biz.coords_source === 'manual' ? 'دستی' : (biz.coords_source || 'osm')}</span>
+                        </div>
+                      )}
                     </td>
                     <td className="py-3.5 px-3 text-xs text-slate-600">
                       <span>{biz.city_name}</span>

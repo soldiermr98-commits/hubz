@@ -23,11 +23,11 @@
 
     var link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/assets/vendor/leaflet/leaflet.css?v=s17';
+    link.href = '/assets/vendor/leaflet/leaflet.css?v=s18';
     document.head.appendChild(link);
 
     var script = document.createElement('script');
-    script.src = '/assets/vendor/leaflet/leaflet.js?v=s17';
+    script.src = '/assets/vendor/leaflet/leaflet.js?v=s18';
     script.async = true;
     script.onload = function () {
       leafletLoaded = true;

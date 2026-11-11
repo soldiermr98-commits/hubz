@@ -81,6 +81,7 @@ export interface BusinessItem {
   lng: number | null;
   coords_source?: string | null;
   coords_verified_at?: string | null;
+  osm_source_id?: string | null;
   hours: string | null;
   short_desc: string | null;
   cover_media_id: number | null;
@@ -659,8 +660,13 @@ export async function financeMutation(path:string, payload:unknown, csrf:string)
 export async function fetchCitiesAndNeighborhoods(): Promise<{cities:CityItem[];neighborhoods:NeighborhoodItem[]}> { return request('/api/v1/cities'); }
 export async function fetchCategoriesAndPacks(): Promise<{categories:CategoryItem[];packs:CategoryPackItem[]}> { return request('/api/v1/categories'); }
 export async function fetchBusinessesList(): Promise<BusinessItem[]> { return (await request('/api/v1/businesses')).businesses; }
-export async function fetchBusinessesPage(page:number, cityId:number, query:string, quality='',status=''): Promise<{businesses:BusinessItem[];total:number;page:number;per_page:number;data_review_schema_ready:boolean}> {
-  return request('/api/v1/businesses?' + new URLSearchParams({page:String(page),city_id:String(cityId),q:query,quality,status}));
+export async function fetchBusinessesPage(page:number, cityId:number, query:string, quality='',status='', coordsRisk:string=''): Promise<{businesses:BusinessItem[];total:number;page:number;per_page:number;data_review_schema_ready:boolean}> {
+  return request('/api/v1/businesses?' + new URLSearchParams({page:String(page),city_id:String(cityId),q:query,quality,status,coords_risk:coordsRisk}));
+}
+// S18: شمارندهٔ گزارش «مختصات پرریسک» (مرکز پلی‌گون OSM، بدون تأیید دستی) برای کارت پنل ادمین
+export async function fetchCoordsRiskTotal(): Promise<number> {
+  const data = await request('/api/v1/businesses?' + new URLSearchParams({page:'1',city_id:'0',q:'',quality:'',status:'',coords_risk:'1'}));
+  return Number(data.total || 0);
 }
 export async function recordBusinessDataReview(payload:{business_id:number;review_hash:string;source_note:string;confirmed:boolean},csrf:string):Promise<any> {
   return action('/api/v1/businesses/data-review',payload,csrf);

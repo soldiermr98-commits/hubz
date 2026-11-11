@@ -2769,7 +2769,7 @@ final class PublicSiteController
     <meta name="twitter:image" content="<?= self::e($baseUrl) ?>/assets/img/logo-hx-card.webp">
     <link rel="preload" href="/assets/fonts/Vazirmatn-Regular.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/assets/fonts/Vazirmatn-Bold.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="/assets/css/public.css?v=s17.0">
+    <link rel="stylesheet" href="/assets/css/public.css?v=s18.0">
     <!-- hhx-ad-until:<?= $adUntil ?> -->
     <!-- hhx-sponsor-until:<?= max(0, (int)($data['sponsor_until'] ?? 0)) ?> -->
     <?php foreach ($schemas as $schema):
@@ -2857,7 +2857,7 @@ final class PublicSiteController
         <?= self::icon('arrow-up', 'hx-icon') ?>
         <span class="hx-visually-hidden">بازگشت به بالا</span>
     </button>
-    <script src="/assets/js/public.js?v=s17.0" defer></script>
+    <script src="/assets/js/public.js?v=s18.0" defer></script>
 </body>
 </html>
         <?php

@@ -41,17 +41,17 @@ const read = (p) => readFile(p, 'utf8');
   assert.ok(!heroSection.includes('googleSearch'), 'جستجوی متنی در دکمهٔ اصلی (hero/compact) نیست');
   // markers: business id برای بیکن پاپ‌آپ
   assert.ok(psc.includes("'id'       => (int)$b['id'],"), 'مارکرهای نقشه شامل شناسهٔ کسب‌وکار هستند (بیکن پاپ‌آپ)');
-  // نسخهٔ دارایی‌ها s17.0 برای ریست کش و OPcache
-  assert.ok(psc.includes('public.css?v=s17.0') && psc.includes('public.js?v=s17.0'), 'نسخهٔ دارایی‌ها به s17.0 ارتقا یافته است');
-  console.log('OK PublicSiteController: منطق دکمهٔ اصلی/کمکی + بیکن + نسخهٔ s17.0');
+  // نسخهٔ دارایی‌ها s18.0 برای ریست کش و OPcache (ارتقا در S18)
+  assert.ok(psc.includes('public.css?v=s18.0') && psc.includes('public.js?v=s18.0'), 'نسخهٔ دارایی‌ها به s18.0 ارتقا یافته است');
+  console.log('OK PublicSiteController: منطق دکمهٔ اصلی/کمکی + بیکن + نسخهٔ s18.0');
 }
 
 // ---------- ۳) Cache و public.js ----------
 {
   const cache = await read('app/Core/Cache.php');
-  assert.ok(cache.includes('public.css?v=s17.0'), 'کش صفحات با نسخهٔ s17.0 ناسازگارها را باطل می‌کند');
+  assert.ok(cache.includes('public.css?v=s18.0'), 'کش صفحات با نسخهٔ s18.0 ناسازگارها را باطل می‌کند');
   const js = await read('public_html/assets/js/public.js');
-  assert.ok(js.includes('/assets/vendor/leaflet/leaflet.js?v=s17'), 'نسخهٔ موتور نقشه در lazy-loader به s17 ارتقا یافته است');
+  assert.ok(js.includes('/assets/vendor/leaflet/leaflet.js?v=s18'), 'نسخهٔ موتور نقشه در lazy-loader به s18 ارتقا یافته است');
   const leaflet = await read('public_html/assets/vendor/leaflet/leaflet.js');
   assert.ok(leaflet.includes('https://nshn.ir/?lat=') && leaflet.includes('https://balad.ir/location?latitude='), 'پاپ‌آپ نقشه لینک نشان و بلد دارد');
   assert.ok(leaflet.includes("'map_popup'"), 'لینک‌های پاپ‌آپ با source-page نقشه‌ای رهگیری می‌شوند');

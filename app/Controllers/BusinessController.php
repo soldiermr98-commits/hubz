@@ -71,10 +71,21 @@ final class BusinessController
         if (isset($missing[$quality])) $where[] = '(' . $missing[$quality] . ')';
         elseif ($quality === 'incomplete') $where[] = '(' . implode(' OR ', $missing) . ')';
         elseif ($quality === 'unreviewed' && $reviewReady) $where[] = '(dr.business_id IS NULL OR dr.data_hash <> CONVERT(' . $hash . ' USING ascii) COLLATE ascii_bin)';
+        // S18: گزارش مختصات پرریسک — نقاطی که از «مرکز هندسی پلی‌گون OSM» (way/relation)
+        // درآمده‌اند و هنوز به‌صورت دستی توسط ادمین تأیید نشده‌اند (coords_source <> 'manual').
+        // این نقاط عامل اصلی ناهماهنگی پین سایت با گوگل‌مپ هستند.
+        $coordsRisk = (string)($_GET['coords_risk'] ?? '') === '1';
+        if ($coordsRisk) {
+            $where[] = 'b.lat IS NOT NULL AND b.lng IS NOT NULL';
+            $where[] = "(b.coords_source IS NULL OR b.coords_source <> 'manual')";
+            $where[] = "EXISTS (SELECT 1 FROM business_sources crs WHERE crs.business_id = b.id AND crs.provider = 'osm' AND (crs.source_id LIKE 'way/%' OR crs.source_id LIKE 'relation/%'))";
+        }
         $whereSql = implode(' AND ', $where);
         $total = (int)(DB::fetchOne("SELECT COUNT(*) AS cnt FROM businesses b {$reviewJoin} WHERE {$whereSql}", $params)['cnt'] ?? 0);
         $photoId = BusinessDataReviewService::effectivePhotoId();
         $reviewSelect = $reviewReady ? ", {$hash} AS review_hash, dr.data_hash AS reviewed_hash, dr.source_note AS review_source_note, dr.reviewed_at" : ", NULL AS review_hash, NULL AS reviewed_hash, NULL AS review_source_note, NULL AS reviewed_at";
+        // S18: نمایش شناسهٔ منبع OSM (مثلاً way/123456) فقط در حالت گزارش پرریسک
+        $osmSourceSelect = $coordsRisk ? ", (SELECT crs2.source_id FROM business_sources crs2 WHERE crs2.business_id = b.id AND crs2.provider = 'osm' ORDER BY crs2.fetched_at ASC, crs2.id ASC LIMIT 1) AS osm_source_id" : '';
         $score = implode(' + ', array_map(static fn(string $condition): string => '(' . $condition . ')', $missing));
         $scoreSelect = $quality !== '' ? ", ({$score}) AS quality_missing_score" : '';
         $order = $quality !== '' ? "(b.status='published') DESC, quality_missing_score DESC, b.updated_at DESC, b.id DESC" : 'b.updated_at DESC, b.id DESC';
@@ -85,7 +96,7 @@ final class BusinessController
                     n.name_fa AS neighborhood_name,
                     m.id AS effective_cover_media_id, m.file_path_480 AS cover_thumb_url,
                     m.file_path_800 AS cover_medium_url,
-                    COALESCE(bp.active,0) AS promoted {$reviewSelect}{$scoreSelect}
+                    COALESCE(bp.active,0) AS promoted {$reviewSelect}{$scoreSelect}{$osmSourceSelect}
              FROM businesses b
              LEFT JOIN cities c ON c.id = b.city_id
              LEFT JOIN categories cat ON cat.id = b.category_id

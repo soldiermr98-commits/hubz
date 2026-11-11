@@ -173,6 +173,11 @@ $router->post('/api/v1/public/report', [PublicSiteController::class, 'submitRepo
 $router->get('/api/v1/analytics/summary', [PublicSiteController::class, 'analyticsSummary']);
 $router->post('/api/v1/system/cron-run', [PublicSiteController::class, 'runCronMaintenance']);
 
+// S16 — دیدگاه‌های کاربران روی کسب‌وکارها (ثبت عمومی + مدیریت پنل)
+$router->post('/api/v1/public/comments', [PublicSiteController::class, 'submitComment']);
+$router->get('/api/v1/comments', [PublicSiteController::class, 'adminCommentsList']);
+$router->post('/api/v1/comments/moderate', [PublicSiteController::class, 'adminCommentsModerate']);
+
 try {
     $router->dispatch($request);
 } catch (\Throwable $e) {

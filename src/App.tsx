@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { LayoutDashboard, Inbox, MapPin, Store, FileText, FileJson, Image as ImageIcon, Megaphone, BarChart3, Settings, LogOut, LoaderCircle } from 'lucide-react';
+import { LayoutDashboard, Inbox, MapPin, Store, FileText, FileJson, Image as ImageIcon, Megaphone, BarChart3, Settings, LogOut, LoaderCircle, MessageSquareText } from 'lucide-react';
 import { AdminUser, CategoryItem, CategoryPackItem, CityItem, NeighborhoodItem,
   fetchAuthMe, loginAdmin, logoutAdmin, fetchCategoriesAndPacks, fetchCitiesAndNeighborhoods, runWebMigrations, updateSeoSchema,
   FINANCE_PENDING_STORAGE_KEY, GATEWAY_PENDING_STORAGE_KEY } from './services/adminApi';
@@ -17,10 +17,12 @@ import { S6AnalyticsPanel } from './components/S6AnalyticsPanel';
 import { StatsView } from './components/StatsView';
 import { AnalyticsSettingsPanel } from './components/AnalyticsSettingsPanel';
 import { JsonImportView } from './components/JsonImportView';
+import { CommentsView } from './components/CommentsView';
 
-type Route = 'dashboard'|'review'|'cities'|'businesses'|'import'|'articles'|'media'|'advertising'|'stats'|'settings';
+type Route = 'dashboard'|'review'|'comments'|'cities'|'businesses'|'import'|'articles'|'media'|'advertising'|'stats'|'settings';
 const nav: Array<{id:Route;label:string;icon:React.ElementType}> = [
   {id:'dashboard',label:'داشبورد',icon:LayoutDashboard},{id:'review',label:'بازبینی',icon:Inbox},
+  {id:'comments',label:'دیدگاه‌ها',icon:MessageSquareText},
   {id:'cities',label:'جمع‌آوری و شهرها',icon:MapPin},{id:'businesses',label:'کسب‌وکارها',icon:Store},
   {id:'import',label:'جمع‌آوری و ورود',icon:FileJson},{id:'articles',label:'مقالات',icon:FileText},
   {id:'media',label:'رسانه',icon:ImageIcon},
@@ -87,6 +89,7 @@ export default function App() {
       {!canOpen(user,route)?<div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">به این بخش دسترسی ندارید؛ یک بخش مجاز را از منو انتخاب کنید.</div>:<>
       {route==='dashboard'&&<div className="space-y-4">{user.role==='admin'&&<section className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4"><div><h2 className="font-bold text-blue-950">درخواست‌های تبلیغات</h2><p className="mt-1 text-sm text-blue-800">درخواست‌های ثبت‌شده را ببینید و پیگیری کنید.</p></div><button type="button" onClick={()=>go('advertising')} className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800">مشاهده درخواست‌ها</button></section>}<S6AnalyticsPanel csrfToken={csrf} onNavigateReview={()=>go('review')}/></div>}
       {route==='review'&&<ReviewQueueView csrfToken={csrf} onRefreshParent={refresh} isAdmin={user.role==='admin'}/>}
+      {route==='comments'&&<CommentsView csrfToken={csrf}/>}
       {route==='cities'&&<CitiesAndCategoriesView cities={cities} categories={categories} packs={packs} csrfToken={csrf} onRefreshData={refresh}/>}
       {route==='businesses'&&<BusinessesManagerView cities={cities} neighborhoods={neighborhoods} categories={categories} csrfToken={csrf} onRefreshData={refresh} isAdmin={user.role==='admin'}/>}
       {route==='import'&&user.role==='admin'&&<JsonImportView cities={cities} categories={categories} csrfToken={csrf} onRefreshData={refresh} onGoReview={()=>go('review')}/>}
