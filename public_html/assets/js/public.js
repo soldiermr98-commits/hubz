@@ -23,11 +23,11 @@
 
     var link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/assets/vendor/leaflet/leaflet.css?v=s7';
+    link.href = '/assets/vendor/leaflet/leaflet.css?v=s17';
     document.head.appendChild(link);
 
     var script = document.createElement('script');
-    script.src = '/assets/vendor/leaflet/leaflet.js?v=s7';
+    script.src = '/assets/vendor/leaflet/leaflet.js?v=s17';
     script.async = true;
     script.onload = function () {
       leafletLoaded = true;
@@ -223,7 +223,7 @@
     ev.preventDefault();
     var msgEl = form.querySelector('[data-hx-form-msg]');
     var endpoint = formType === 'claim' ? '/api/v1/public/claim' :
-      formType === 'advertising' ? '/api/v1/public/advertising-inquiry' : '/api/v1/public/report';
+      formType === 'advertising' ? '/api/v1/public/advertising-inquiry' : '/api/v1/public/comments';
     var fd = new FormData(form);
     var body = {};
     fd.forEach(function (val, key) {
@@ -259,6 +259,9 @@
         }
         if (res.ok) {
           form.reset();
+          if (formType === 'comment') {
+            try { document.dispatchEvent(new CustomEvent('hx:comment-success')); } catch (e) {}
+          }
         }
       })
       .catch(function () {
@@ -268,4 +271,56 @@
         }
       }).finally(function () { if (submit) submit.disabled = false; });
   });
+
+  // S10 — فیلتر دسته‌بندی کارت‌های «برترین کسب‌وکارها» در صفحه اصلی
+  document.querySelectorAll('[data-hx-filter-tabs]').forEach(function (wrap) {
+    var tabs = wrap.querySelectorAll('button[data-hx-cat]');
+    if (!tabs.length) return;
+    var cards = document.querySelectorAll('[data-hx-cat-card]');
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        var cat = tab.getAttribute('data-hx-cat') || 'all';
+        tabs.forEach(function (t) { t.classList.toggle('hx-tab-active', t === tab); });
+        cards.forEach(function (card) {
+          card.hidden = cat !== 'all' && card.getAttribute('data-hx-cat') !== cat;
+        });
+      });
+    });
+  });
+  // S16 — پس از موفقیت ثبت دیدگاه، فرم پنهان و کارت تشکر نمایش داده می‌شود
+  document.addEventListener('hx:comment-success', function () {
+    var form = document.getElementById('hx-comment-form');
+    var done = document.getElementById('hx-comment-done');
+    if (form) form.style.display = 'none';
+    if (done) {
+      done.style.display = 'block';
+      var smooth = true;
+      try { smooth = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
+      try { done.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'center' }); } catch (e) {}
+    }
+  });
+
+  // S16 — هایلایت خودکار بخش فعال در ناوبری چسبان صفحه جزئیات (با احترام به prefers-reduced-motion)
+  (function () {
+    var links = document.querySelectorAll('.hx-subnav a[href^="#"]');
+    if (!links.length || !('IntersectionObserver' in window)) return;
+    var sections = [];
+    links.forEach(function (link) {
+      var id = (link.getAttribute('href') || '').slice(1);
+      var sec = id ? document.getElementById(id) : null;
+      if (sec) sections.push({ link: link, sec: sec });
+    });
+    if (!sections.length) return;
+    var activeTimer = null;
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        sections.forEach(function (pair) {
+          var isActive = pair.sec === entry.target;
+          pair.link.classList.toggle('hx-subnav-active', isActive);
+        });
+      });
+    }, { rootMargin: '-25% 0px -60% 0px', threshold: 0 });
+    sections.forEach(function (pair) { observer.observe(pair.sec); });
+  })();
 })();

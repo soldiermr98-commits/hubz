@@ -288,9 +288,12 @@ final class PipelineService
                         self::enqueueChange($id, $field, (string) ($existing[$field] ?? ''), $value, $provider);
                     }
                 }
-                if ($lat !== null && $lng !== null && ($existing['lat'] === null || $existing['lng'] === null)) {
+                // S17: قفل مختصات دستی — اگر ادمین نقطه را دستی تأیید کرده ('manual')،
+                // هیچ ایمپورتی حق پیشنهاد یا تغییر مختصات ندارد؛ فقط ثبت منبع/امتیاز ادامه می‌یابد.
+                $coordsLocked = (($existing['coords_source'] ?? null) === 'manual');
+                if ($lat !== null && $lng !== null && !$coordsLocked && ($existing['lat'] === null || $existing['lng'] === null)) {
                     self::enqueueChange($id, 'coordinates', ($existing['lat'] ?? '') . ',' . ($existing['lng'] ?? ''), $lat . ',' . $lng, $provider);
-                } elseif ($lat !== null && $lng !== null && $existing['lat'] !== null && $existing['lng'] !== null) {
+                } elseif ($lat !== null && $lng !== null && !$coordsLocked && $existing['lat'] !== null && $existing['lng'] !== null) {
                     $distance = self::distanceMeters($lat, $lng, (float) $existing['lat'], (float) $existing['lng']);
                     if ($distance !== null && $distance > 30) {
                         self::enqueueChange($id, 'coordinates', $existing['lat'] . ',' . $existing['lng'], $lat . ',' . $lng, $provider);
@@ -311,11 +314,13 @@ final class PipelineService
 
             $reason = $closed ? 'permanently_closed' : (!$phones ? 'missing_valid_phone' : 'manual_review');
             $slug = SlugService::ensureUniqueSlug('businesses', SlugService::suggestSlug($name, 'biz'));
-            DB::query("INSERT INTO businesses (name, normalized_name, slug, category_id, city_id, address, lat, lng, hours,
+            // S17: منشأ مختصات ثبت‌شدهٔ ایمپورت (provenance) از همان ابتدا ذخیره می‌شود
+            $importCoordsSource = ($lat !== null && $lng !== null) ? MapLinks::sanitizeProvider($provider) : null;
+            DB::query("INSERT INTO businesses (name, normalized_name, slug, category_id, city_id, address, lat, lng, coords_source, hours,
                 status, tier, internal_score, confidence, publish_reason, last_collected_at, created_at, updated_at)
-                VALUES (:name,:norm,:slug,:cat,:city,:addr,:lat,:lng,:hours,'pending_review','C',:score,'low',:reason,NOW(),NOW(),NOW())",
+                VALUES (:name,:norm,:slug,:cat,:city,:addr,:lat,:lng,:coords_source,:hours,'pending_review','C',:score,'low',:reason,NOW(),NOW(),NOW())",
                 ['name'=>$name,'norm'=>$key,'slug'=>$slug,'cat'=>$defaultCategoryId,'city'=>$cityId,
-                 'addr'=>$address !== '' ? $address : null,'lat'=>$lat,'lng'=>$lng,'hours'=>$hours !== '' ? $hours : null,
+                 'addr'=>$address !== '' ? $address : null,'lat'=>$lat,'lng'=>$lng,'coords_source'=>$importCoordsSource,'hours'=>$hours !== '' ? $hours : null,
                  'score'=>$score,'reason'=>$reason]);
             $id = DB::lastInsertId();
             DB::query("INSERT INTO business_sources (business_id,provider,source_id,raw,rating,reviews_count,fetched_at) VALUES (:id,:p,:sid,:raw,:rating,:reviews,COALESCE(:fetched,NOW()))",

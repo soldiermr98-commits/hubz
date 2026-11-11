@@ -250,7 +250,11 @@ final class ReviewQueueController
                         elseif ($field === 'coordinates') {
                             $coords=explode(',', $new);
                             if (count($coords)!==2 || !is_numeric($coords[0]) || !is_numeric($coords[1]) || abs((float)$coords[0])>90 || abs((float)$coords[1])>180) { $pdo->rollBack(); $skipped++; continue; }
-                            DB::query("UPDATE businesses SET lat=:lat,lng=:lng,updated_at=NOW() WHERE id=:id", ['lat'=>(float)$coords[0],'lng'=>(float)$coords[1],'id'=>$targetId]);
+                            // S17: قفل مختصات دستی ادمین — پیشنهاد ایمپورت هرگز روی نقطهٔ manual اعمال نمی‌شود
+                            if (($target['coords_source'] ?? null) === 'manual') { $pdo->rollBack(); $skipped++; continue; }
+                            $srcProvider = (string)($payload['source'] ?? '');
+                            $coordsSource = \App\Services\MapLinks::sanitizeProvider($srcProvider);
+                            DB::query("UPDATE businesses SET lat=:lat,lng=:lng,coords_source=COALESCE(:src,coords_source),updated_at=NOW() WHERE id=:id", ['lat'=>(float)$coords[0],'lng'=>(float)$coords[1],'src'=>$coordsSource,'id'=>$targetId]);
                         } elseif ($field === 'status') {
                             if ($new !== 'hidden') { $pdo->rollBack(); $skipped++; continue; }
                             DB::query("UPDATE businesses SET status='hidden',updated_at=NOW() WHERE id=:id", ['id'=>$targetId]);

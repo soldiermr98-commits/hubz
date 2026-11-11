@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Store,
   Plus,
@@ -35,6 +35,7 @@ import {
 } from '../services/adminApi';
 import { MediaDimensionGuideBox } from './MediaDimensionGuideBox';
 import { MediaLibraryPickerModal } from './MediaLibraryPickerModal';
+import { parseCoordsFromPaste } from '../services/coordsParse';
 
 interface BusinessesManagerViewProps {
   cities: CityItem[];
@@ -251,6 +252,16 @@ export const BusinessesManagerView: React.FC<BusinessesManagerViewProps> = ({
   const [mediaFeedback, setMediaFeedback] = useState<string>('');
   const [uploadingMedia, setUploadingMedia] = useState<boolean>(false);
 
+  // S17: نقشهٔ انتخاب مکان + Paste سریع لینک/مختصات گوگل‌مپ + منشأ مختصات
+  const [pasteCoords, setPasteCoords] = useState<string>('');
+  const [coordsPasteMsg, setCoordsPasteMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [coordsSourceOverride, setCoordsSourceOverride] = useState<string | null>(null);
+  const [pickerVisible, setPickerVisible] = useState<boolean>(false);
+  const [coordsRev, setCoordsRev] = useState<number>(0);
+  const pickerBoxRef = useRef<HTMLDivElement | null>(null);
+  const pickerApiRef = useRef<{ setPos: (lat: number, lng: number) => void } | null>(null);
+  const lastParsedRef = useRef<{ lat: number; lng: number } | null>(null);
+
   // خطای کنار فیلد + لینک «برو به فیلد» (بخش ۷ قوانین UX)
   const [formError, setFormError] = useState<{ text: string; field?: string } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string>('');
@@ -276,6 +287,12 @@ export const BusinessesManagerView: React.FC<BusinessesManagerViewProps> = ({
     setCoverMediaId(null);
     setCoverPreviewUrl(null);
     setMediaFeedback('');
+    setPasteCoords('');
+    setCoordsPasteMsg(null);
+    setCoordsSourceOverride(null);
+    setPickerVisible(false);
+    setCoordsRev(0);
+    pickerApiRef.current = null;
     setFormError(null);
     setPublishIntent(false);
     setMode('form');
@@ -306,6 +323,12 @@ export const BusinessesManagerView: React.FC<BusinessesManagerViewProps> = ({
     setCoverMediaId(biz.cover_media_id);
     setCoverPreviewUrl(biz.cover_thumb_url || null);
     setMediaFeedback('');
+    setPasteCoords('');
+    setCoordsPasteMsg(null);
+    setCoordsSourceOverride(null);
+    setPickerVisible(false);
+    setCoordsRev(0);
+    pickerApiRef.current = null;
     setFormError(null);
     setPublishIntent(false);
     setMode('form');
@@ -318,6 +341,97 @@ export const BusinessesManagerView: React.FC<BusinessesManagerViewProps> = ({
     setStatus('published');
     setPublishIntent(true);
   };
+
+  // S17: استخراج Lat/Lng از لینک یا مختصات یک‌خطی گوگل‌مپ و اعمال روی فرم + پین نقشه
+  const applyPasteCoords = (raw: string) => {
+    const parsed = parseCoordsFromPaste(raw);
+    if (!parsed) {
+      setCoordsPasteMsg({ ok: false, text: 'مختصات شناسایی نشد؛ مختصات معتبر یا لینک کامل گوگل‌مپ را Paste کنید.' });
+      return;
+    }
+    setLat(String(parsed.lat));
+    setLng(String(parsed.lng));
+    setCoordsSourceOverride('manual');
+    lastParsedRef.current = parsed;
+    setCoordsRev((n) => n + 1);
+    setPickerVisible(true);
+    setCoordsPasteMsg({
+      ok: true,
+      text: `مختصات اعمال شد: ${parsed.lat.toFixed(6)}, ${parsed.lng.toFixed(6)} — منبع مختصات هنگام ذخیره «دستی» ثبت می‌شود.`,
+    });
+  };
+
+  // بارگذاری تنبل موتور سلف‌هاست hhx-picker و ساخت نقشه فقط در صورت نمایش
+  useEffect(() => {
+    if (!pickerVisible || !pickerBoxRef.current || pickerApiRef.current) return;
+    let cancelled = false;
+    const w = window as unknown as {
+      HHXPicker?: { render: (el: HTMLDivElement, o: Record<string, unknown>) => { setPos: (lat: number, lng: number) => void } | null };
+      __hhxPickerPromise?: Promise<void>;
+    };
+    const ensureScript = () => {
+      if (w.HHXPicker && typeof w.HHXPicker.render === 'function') return Promise.resolve();
+      if (!w.__hhxPickerPromise) {
+        w.__hhxPickerPromise = new Promise<void>((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = '/assets/vendor/leaflet/hhx-picker.js?v=s17';
+          s.async = true;
+          s.onload = () => resolve();
+          s.onerror = () => reject(new Error('picker script failed'));
+          document.body.appendChild(s);
+        });
+      }
+      return w.__hhxPickerPromise;
+    };
+    ensureScript()
+      .then(() => {
+        if (cancelled || !pickerBoxRef.current || !w.HHXPicker || typeof w.HHXPicker.render !== 'function') return;
+        pickerApiRef.current = w.HHXPicker.render(pickerBoxRef.current, {
+          lat: lat !== '' ? Number(lat) : null,
+          lng: lng !== '' ? Number(lng) : null,
+          zoom: 14,
+          onChange: (la: number, lo: number) => {
+            const fixedLat = Number(la.toFixed(7));
+            const fixedLng = Number(lo.toFixed(7));
+            setLat(String(fixedLat));
+            setLng(String(fixedLng));
+            setCoordsSourceOverride('manual');
+            lastParsedRef.current = { lat: fixedLat, lng: fixedLng };
+          },
+        });
+      })
+      .catch(() => {
+        setCoordsPasteMsg({ ok: false, text: 'بارگذاری موتور نقشه ناموفق بود؛ مختصات را دستی وارد کنید.' });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickerVisible]);
+
+  // هم‌گام‌سازی پین با مختصات اعمال‌شده از Paste (وقتی نقشه از قبل باز بوده)
+  useEffect(() => {
+    if (coordsRev === 0) return;
+    const p = lastParsedRef.current;
+    if (p && pickerApiRef.current) pickerApiRef.current.setPos(p.lat, p.lng);
+  }, [coordsRev]);
+
+  // نمایش منشأ مختصات فعلی (بازنویسی محلی پس از ویرایش، وگرنه مقدار ثبت‌شده در دیتابیس)
+  const coordsSourceLabels: Record<string, string> = {
+    manual: 'دستی — تأییدشده توسط شما',
+    osm: 'OpenStreetMap',
+    neshan: 'نشان',
+    google_maps: 'Google Maps',
+    gosom: 'Google Maps',
+    csv: 'فایل CSV',
+    wikidata: 'Wikidata',
+    balad: 'بلد',
+  };
+  const editingBiz = pageBusinesses.find((b) => Number(b.id) === Number(bizId));
+  const effectiveCoordsSource = coordsSourceOverride ?? editingBiz?.coords_source ?? null;
+  const coordsSourceText = effectiveCoordsSource
+    ? (coordsSourceLabels[effectiveCoordsSource] || effectiveCoordsSource)
+    : 'ثبت نشده (مختصات ایمپورت)';
 
   const scrollToField = (fieldName: string) => {
     const el = document.getElementById(`biz_field_${fieldName}`);
@@ -1012,6 +1126,73 @@ export const BusinessesManagerView: React.FC<BusinessesManagerViewProps> = ({
                   </select>
                 </div>
               </div>
+
+              {/* S17: نقشهٔ انتخاب مکان با پین قابل کشیدن + Paste سریع لینک/مختصات گوگل‌مپ */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+                <div className="md:col-span-2 space-y-2">
+                  <label className="block text-xs font-semibold text-slate-800">
+                    انتخاب دقیق مکان روی نقشه (پین قابل کشیدن · کلیک روی نقشه، پین را منتقل می‌کند)
+                  </label>
+                  <div ref={pickerBoxRef} className="w-full"></div>
+                  {!pickerVisible && (
+                    <button
+                      type="button"
+                      onClick={() => setPickerVisible(true)}
+                      className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
+                    >
+                      نمایش نقشهٔ انتخاب مکان
+                    </button>
+                  )}
+                  <p className="text-[11px] text-slate-500 leading-5">
+                    پس از جابه‌جایی پین، فیلدهای Lat/Lng به‌روز می‌شوند و منبع مختصات هنگام ذخیره «دستی» ثبت می‌شود؛ مختصات دستی در ایمپورت‌های بعدی قفل می‌شود و بازنویسی نمی‌شود.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold text-slate-800">Paste سریع لینک یا مختصات گوگل‌مپ</label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={pasteCoords}
+                    onChange={(e) => setPasteCoords(e.target.value)}
+                    onPaste={(e) => {
+                      const t = e.clipboardData?.getData('text') || '';
+                      if (t) {
+                        e.preventDefault();
+                        setPasteCoords(t);
+                        applyPasteCoords(t);
+                      }
+                    }}
+                    placeholder="37.2761, 49.5886 یا لینک کامل گوگل‌مپ"
+                    className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-300 rounded-lg"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applyPasteCoords(pasteCoords)}
+                      className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg"
+                    >
+                      استخراج و اعمال
+                    </button>
+                    {coordsPasteMsg && (
+                      <span className={coordsPasteMsg.ok ? 'text-[11px] text-emerald-700 font-medium' : 'text-[11px] text-rose-600 font-medium'}>
+                        {coordsPasteMsg.text}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-5">
+                    هم مختصات خام («37.2761, 49.5886») و هم لینک‌های حاوی «@lat,lng» یا «!3dLAT!4dLNG» پذیرفته می‌شود؛ ارقام فارسی خودکار تبدیل می‌شود.
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-slate-600 pt-1">
+                منبع مختصات فعلی:{' '}
+                <strong className={effectiveCoordsSource === 'manual' ? 'text-emerald-700' : 'text-slate-800'}>
+                  {coordsSourceText}
+                </strong>
+                {effectiveCoordsSource === 'manual' && editingBiz?.coords_verified_at
+                  ? ` · تأیید در ${editingBiz.coords_verified_at.slice(0, 10)}`
+                  : ''}
+              </p>
             </div>
 
             {/* بخش ثابت ۳: توضیح کوتاه و آپلود تصویر WebP با GD */}

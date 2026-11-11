@@ -82,18 +82,43 @@
         popup.appendChild(address);
       }
       var links = document.createElement('div');
-      links.style.cssText = 'display:flex;gap:8px;align-items:center';
+      links.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap';
       if (typeof m.url === 'string' && /^\/b\/[a-z0-9-]+\/$/.test(m.url)) {
         var detail = document.createElement('a');
         detail.href = m.url;
         detail.textContent = 'مشاهده صفحه کسب‌وکار';
         links.appendChild(detail);
       }
-      var directions = document.createElement('a');
-      directions.href = 'https://www.google.com/maps/dir/?api=1&destination=' + Number(m.lat) + ',' + Number(m.lng);
-      directions.target = '_blank'; directions.rel = 'noopener';
-      directions.textContent = 'مسیریابی';
-      links.appendChild(directions);
+      // S17: مجموعهٔ کامل مسیریابی در پاپ‌آپ — همه با بیکن آمار (data-hx-track="map")
+      var lat = Number(m.lat);
+      var lng = Number(m.lng);
+      var trackAttrs = function (a, provider) {
+        a.target = '_blank'; a.rel = 'noopener';
+        a.setAttribute('data-hx-track', 'map');
+        a.setAttribute('data-business-id', String(m.id || 0));
+        a.setAttribute('data-source-page', 'map_popup');
+        a.setAttribute('data-provider', provider);
+      };
+      var gLink = document.createElement('a');
+      gLink.href = 'https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lng;
+      gLink.textContent = 'مسیریابی گوگل';
+      trackAttrs(gLink, 'google');
+      links.appendChild(gLink);
+      var nLink = document.createElement('a');
+      nLink.href = 'https://nshn.ir/?lat=' + lat + '&lng=' + lng;
+      nLink.textContent = 'نشان';
+      trackAttrs(nLink, 'neshan');
+      links.appendChild(nLink);
+      var bLink = document.createElement('a');
+      bLink.href = 'https://balad.ir/location?latitude=' + lat + '&longitude=' + lng;
+      bLink.textContent = 'بلد';
+      trackAttrs(bLink, 'balad');
+      links.appendChild(bLink);
+      var sLink = document.createElement('a');
+      sLink.href = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent((m.name || '') + ' ' + (m.district || ''));
+      sLink.textContent = 'جستجوی نام';
+      trackAttrs(sLink, 'google_search');
+      links.appendChild(sLink);
       popup.appendChild(links);
     }
 

@@ -79,6 +79,8 @@ export interface BusinessItem {
   address: string | null;
   lat: number | null;
   lng: number | null;
+  coords_source?: string | null;
+  coords_verified_at?: string | null;
   hours: string | null;
   short_desc: string | null;
   cover_media_id: number | null;
@@ -905,4 +907,37 @@ export async function saveAnalyticsSettings(rawRetentionDays:number, csrf:string
 export interface AiServiceLogRow { ok:number; status_code:number|null; message:string; created_at:string }
 export async function fetchAiProviderLogs(provider:string, limit=15):Promise<{ok:boolean;provider:string;logs:AiServiceLogRow[]}> {
   return request('/api/v1/ai/providers/logs?' + new URLSearchParams({ provider, limit:String(limit) }), { cache:'no-store' });
+}
+
+// ============ S16 — دیدگاه‌های کاربران روی کسب‌وکارها ============
+export interface CommentItem {
+  id: number;
+  business_id: number;
+  name: string;
+  rating: number;
+  body: string;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+  reviewed_at: string | null;
+  business_name: string;
+  business_slug: string;
+  city_name_fa: string;
+  city_slug: string;
+}
+export interface CommentListResponse {
+  ok: boolean;
+  items: CommentItem[];
+  total: number;
+  page: number;
+  per_page: number;
+  status: string;
+  counts: { pending: number; approved: number; rejected: number };
+}
+export async function fetchComments(status: string, q: string, page: number): Promise<CommentListResponse> {
+  const params = new URLSearchParams({ status, page: String(page) });
+  if (q.trim()) params.set('q', q.trim());
+  return request(`/api/v1/comments?${params.toString()}`, { cache: 'no-store' });
+}
+export async function moderateComment(id: number, act: 'approve' | 'reject' | 'delete', csrf: string): Promise<any> {
+  return action('/api/v1/comments/moderate', { id, action: act }, csrf);
 }

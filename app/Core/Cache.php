@@ -124,7 +124,7 @@ final class Cache
         [$handle, $generation] = $locked;
         try {
             $content = @file_get_contents(self::resolveFilePath($uriPath));
-            if (!is_string($content) || (!str_contains($content, 'public.css?v=s10.3') && !str_contains($content, 'public.css?v=s10.0'))) return null;
+            if (!is_string($content) || !str_contains($content, 'public.css?v=s17.0')) return null;
             if (!preg_match('/\n<!-- hhx-cache-generation:([a-f0-9]{32}):(\d+) -->\z/D', $content, $cache)) return null;
             $created = (int)$cache[2];
             $now = time();

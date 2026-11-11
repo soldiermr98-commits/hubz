@@ -358,7 +358,8 @@ final class BusinessController
         $pdo->beginTransaction();
 
         if ($id > 0) {
-            $previous = DB::fetchOne('SELECT b.slug,b.city_id,c.slug AS city_slug FROM businesses b INNER JOIN cities c ON c.id=b.city_id WHERE b.id=:id FOR UPDATE', ['id'=>$id]);
+            // S17: برای تشخیص تغییر واقعی مختصات، مقدار قبلی lat/lng/coords_source هم خوانده می‌شود
+            $previous = DB::fetchOne('SELECT b.slug,b.city_id,b.lat,b.lng,b.coords_source,b.coords_verified_at,c.slug AS city_slug FROM businesses b INNER JOIN cities c ON c.id=b.city_id WHERE b.id=:id FOR UPDATE', ['id'=>$id]);
             if (!$previous) { $pdo->rollBack(); Response::json(['ok'=>false,'error'=>'کسب‌وکار یافت نشد.'], 404); }
             if ((string)$previous['slug'] !== $uniqueSlug || (int)$previous['city_id'] !== $cityId) {
                 try {
@@ -368,6 +369,24 @@ final class BusinessController
                     Response::json(['ok'=>false,'error'=>$e->getMessage()], 409);
                 }
             }
+
+            // S17: منشأ مختصات — فقط وقتی نقطه واقعاً تغییر یا پاک شده دست می‌زنیم؛
+            // ذخیرهٔ معمولی فرم (بدون تغییر نقطه) منبع/زمان تأیید قبلی را دست‌نخورده نگه می‌دارد.
+            $prevLat = $previous['lat'] !== null ? (float)$previous['lat'] : null;
+            $prevLng = $previous['lng'] !== null ? (float)$previous['lng'] : null;
+            $coordsChanged = $lat !== null && ($prevLat === null || abs($prevLat - $lat) > 0.000001 || abs($prevLng - $lng) > 0.000001);
+            $coordsCleared = $lat === null && $prevLat !== null;
+            if ($coordsCleared) {
+                $coordsSource = null;
+                $coordsVerifiedAt = null;
+            } elseif ($coordsChanged) {
+                $coordsSource = 'manual';
+                $coordsVerifiedAt = date('Y-m-d H:i:s');
+            } else {
+                $coordsSource = $previous['coords_source'] !== null ? (string)$previous['coords_source'] : null;
+                $coordsVerifiedAt = $previous['coords_verified_at'] !== null ? (string)$previous['coords_verified_at'] : null;
+            }
+
             DB::query(
                 "UPDATE businesses
                  SET name = :name,
@@ -379,6 +398,8 @@ final class BusinessController
                      address = :addr,
                      lat = :lat,
                      lng = :lng,
+                     coords_source = :coords_source,
+                     coords_verified_at = :coords_verified_at,
                      hours = :hours,
                      short_desc = :desc,
                      cover_media_id = :media_id,
@@ -396,6 +417,8 @@ final class BusinessController
                     'addr' => $address !== '' ? $address : null,
                     'lat' => $lat,
                     'lng' => $lng,
+                    'coords_source' => $coordsSource,
+                    'coords_verified_at' => $coordsVerifiedAt,
                     'hours' => $hours !== '' ? $hours : null,
                     'desc' => $shortDesc !== '' ? $shortDesc : null,
                     'media_id' => $coverMediaId,
@@ -409,9 +432,9 @@ final class BusinessController
         } else {
             DB::query(
                 "INSERT INTO businesses
-                    (name, normalized_name, slug, category_id, city_id, neighborhood_id, address, lat, lng, hours, short_desc, cover_media_id, status, tier, internal_score, confidence, publish_reason, created_at, updated_at)
+                    (name, normalized_name, slug, category_id, city_id, neighborhood_id, address, lat, lng, coords_source, coords_verified_at, hours, short_desc, cover_media_id, status, tier, internal_score, confidence, publish_reason, created_at, updated_at)
                  VALUES
-                    (:name, :norm, :slug, :cat_id, :city_id, :nid, :addr, :lat, :lng, :hours, :desc, :media_id, :status, :tier, 0.000, 'low', 'manual_entry', NOW(), NOW())",
+                    (:name, :norm, :slug, :cat_id, :city_id, :nid, :addr, :lat, :lng, :coords_source, :coords_verified_at, :hours, :desc, :media_id, :status, :tier, 0.000, 'low', 'manual_entry', NOW(), NOW())",
                 [
                     'name' => $name,
                     'norm' => $normalizedName,
@@ -422,6 +445,8 @@ final class BusinessController
                     'addr' => $address !== '' ? $address : null,
                     'lat' => $lat,
                     'lng' => $lng,
+                    'coords_source' => $lat !== null ? 'manual' : null,
+                    'coords_verified_at' => $lat !== null ? date('Y-m-d H:i:s') : null,
                     'hours' => $hours !== '' ? $hours : null,
                     'desc' => $shortDesc !== '' ? $shortDesc : null,
                     'media_id' => $coverMediaId,
