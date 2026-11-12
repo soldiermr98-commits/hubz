@@ -34,7 +34,7 @@ INCLUDE_FILES = ('scripts/build_s18_master_rollup.py',)
 
 # پوشه‌هایی که به هیچ شکلی نباید وارد بسته شوند (کامل یا داخل درخت‌های مجاز)
 EXCLUDED_DIR_NAMES = {
-    'node_modules', '.git', '.github', '.aistudio', 'dist', 'build',
+    'node_modules', '.git', '.github', '.aistudio', 'aistudio', 'dist', 'build',
     '__pycache__', 'cache', 'uploads', 'storage', 'coverage',
 }
 # نام فایل‌هایی که اکیداً ممنوع‌اند حتی اگر جایی در درخت مجاز دیده شوند

@@ -1,2 +1,2 @@
-ff10d733ae0a4d7ba0cf806ca7909811cf7e34ec04ad75b7210f70804fa89be7  hamihub-full-upgrade-to-s18.zip
+89ba7086a5f4a09ea7d35bea1ceffd6e51b5a8bd6b131c5d6c72897597fe6dc6  hamihub-full-upgrade-to-s18.zip
 1792e034fd01080c8ffec87424ef4b3b63b3d02061ce94e035b445502c2e2399  RAHNAMA-FA.md

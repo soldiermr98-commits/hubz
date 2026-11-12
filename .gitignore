@@ -14,3 +14,7 @@ coverage/
 /storage/installed.lock
 /storage/logs/
 /storage/private/
+
+# AI Studio artifacts (temp media / hashed leftovers) — useless on server
+.aistudio/
+**/assets/aistudio/
