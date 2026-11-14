@@ -172,16 +172,18 @@ final class AnalyticsService
         }
 
         try {
+            // S26: همهٔ نام‌های مستعار داخل بک‌تیک هستند؛ «call» کلمهٔ رزروشدهٔ MariaDB/MySQL
+            // است و بدون بک‌تیک این کوئری با خطای ۱۰۶۴ (syntax error near 'call') شکست می‌خورد.
             $series = DB::fetchAll(
-                'SELECT day,
-                        SUM(views) AS views, SUM(unique_visitors) AS uniques,
-                        SUM(clicks_call) AS call, SUM(clicks_map) AS map,
-                        SUM(clicks_website) AS website, SUM(clicks_instagram) AS instagram,
-                        SUM(clicks_whatsapp) AS whatsapp, SUM(clicks_banner) AS banner,
-                        SUM(searches) AS searches
+                'SELECT `day`,
+                        SUM(`views`) AS `views`, SUM(`unique_visitors`) AS `uniques`,
+                        SUM(`clicks_call`) AS `call`, SUM(`clicks_map`) AS `map`,
+                        SUM(`clicks_website`) AS `website`, SUM(`clicks_instagram`) AS `instagram`,
+                        SUM(`clicks_whatsapp`) AS `whatsapp`, SUM(`clicks_banner`) AS `banner`,
+                        SUM(`searches`) AS `searches`
                  FROM analytics_daily
-                 WHERE day BETWEEN :from AND :to
-                 GROUP BY day ORDER BY day',
+                 WHERE `day` BETWEEN :from AND :to
+                 GROUP BY `day` ORDER BY `day`',
                 $params
             );
         } catch (Throwable $e) {
@@ -359,12 +361,15 @@ final class AnalyticsService
     private static function topTargets(string $type, string $from, string $to, int $onlyId, int $limit): array
     {
         [$join, $titleExpr, $titleColumn] = self::joinFor($type);
-        $sql = "SELECT d.target_id AS id, {$titleExpr} AS title,
-                       SUM(d.views) AS views, SUM(d.unique_visitors) AS uniques,
-                       SUM(d.clicks_call) AS call, SUM(d.clicks_map) AS map,
-                       SUM(d.clicks_website) AS website, SUM(d.clicks_instagram) AS instagram,
-                       SUM(d.clicks_whatsapp) AS whatsapp, SUM(d.clicks_banner) AS banner,
-                       SUM(d.searches) AS searches
+        // S26: نام‌های مستعار بک‌تیک شدند («call» در MariaDB رزروشده است و بدون بک‌تیک
+        // خطای ۱۰۶۴ می‌دهد) و مرتب‌سازی به‌جای ارجاع به مستعار، صریحاً روی عبارت تجمیعی
+        // انجام می‌شود تا ابهام «مستعار یا ستون» برای نام‌هایی مثل views پیش نیاید.
+        $sql = "SELECT d.target_id AS `id`, {$titleExpr} AS `title`,
+                       SUM(d.views) AS `views`, SUM(d.unique_visitors) AS `uniques`,
+                       SUM(d.clicks_call) AS `call`, SUM(d.clicks_map) AS `map`,
+                       SUM(d.clicks_website) AS `website`, SUM(d.clicks_instagram) AS `instagram`,
+                       SUM(d.clicks_whatsapp) AS `whatsapp`, SUM(d.clicks_banner) AS `banner`,
+                       SUM(d.searches) AS `searches`
                 FROM analytics_daily d {$join}
                 WHERE d.day BETWEEN :from AND :to AND d.target_type = :type";
         $params = ['from' => $from, 'to' => $to, 'type' => $type];
@@ -372,7 +377,7 @@ final class AnalyticsService
             $sql .= ' AND d.target_id = :only';
             $params['only'] = $onlyId;
         }
-        $sql .= " GROUP BY d.target_id, {$titleColumn} ORDER BY views DESC, uniques DESC LIMIT {$limit}";
+        $sql .= " GROUP BY d.target_id, {$titleColumn} ORDER BY SUM(d.views) DESC, SUM(d.unique_visitors) DESC LIMIT {$limit}";
         return DB::fetchAll($sql, $params);
     }
 
