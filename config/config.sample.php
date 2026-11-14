@@ -38,7 +38,7 @@ return [
             'gemini' => ['enabled'=>false, 'free_tier_confirmed'=>false, 'api_key'=>'', 'model'=>'gemini-3.5-flash-lite'],
             'groq' => ['enabled'=>false, 'free_tier_confirmed'=>false, 'api_key'=>'', 'model'=>'openai/gpt-oss-120b'],
             'openrouter' => ['enabled'=>false, 'free_tier_confirmed'=>false, 'api_key'=>'', 'model'=>'openrouter/free'],
-            'nvidia' => ['enabled'=>false, 'free_tier_confirmed'=>false, 'api_key'=>'', 'model'=>'nvidia/nemotron-3.5-lightning-30b-a3b'],
+            'nvidia' => ['enabled'=>false, 'free_tier_confirmed'=>false, 'api_key'=>'', 'model'=>'nvidia/nemotron-3.5-lightning'],
         ],
     ],
     // Experimental sandbox only. Leave off on production until the provider

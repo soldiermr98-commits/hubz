@@ -26,30 +26,28 @@ final class BusinessSeoService
     public const SETTINGS_FALLBACK_KEY = 'seo_deleted_business_rules';
     private const MAX_FALLBACK_RULES = 5000;
 
+    /** Cache of the schema check; class-level so resetSchemaCache() can actually clear it. */
+    private static ?bool $schemaReady = null;
+
     public static function schemaReady(): bool
     {
-        static $ready = null;
-        if ($ready !== null) {
-            return $ready;
+        if (self::$schemaReady !== null) {
+            return self::$schemaReady;
         }
         try {
             $ready = DB::fetchOne("SHOW TABLES LIKE 'seo_url_rules'") !== null;
-            return $ready;
         } catch (Throwable) {
-            return false;
+            $ready = false;
         }
+        self::$schemaReady = $ready;
+        return $ready;
     }
 
     public static function resetSchemaCache(): void
     {
-        // Used right after running migration 012 in the same request.
-        try {
-            $ref = new \ReflectionMethod(self::class, 'schemaReady');
-            // Static local cache cannot be reset via reflection in all PHP builds;
-            // migrateSettingsFallbackToTable() queries the table directly.
-            unset($ref);
-        } catch (Throwable) {
-        }
+        // Used right after running migration 012 in the same request so the next
+        // schemaReady() call re-queries the database instead of the stale result.
+        self::$schemaReady = null;
     }
 
     public static function normalizePath(string $path): string

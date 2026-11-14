@@ -9,6 +9,8 @@ import { ReviewQueueView } from './components/ReviewQueueView';
 import { ArticlesManagerView } from './components/ArticlesManagerView';
 import { MediaManagerView } from './components/MediaManagerView';
 import { AiWorkerPanel } from './components/AiWorkerPanel';
+import { AiTasksQueuePanel } from './components/AiTasksQueuePanel';
+import { SystemHealthPanel } from './components/SystemHealthPanel';
 import { AdminMailPanel } from './components/AdminMailPanel';
 import { StaffManager } from './components/StaffManager';
 import { CronHelpPanel } from './components/CronHelpPanel';
@@ -97,7 +99,7 @@ export default function App() {
       {route==='media'&&<MediaManagerView csrfToken={csrf} isAdmin={user.role==='admin'}/>}
       {route==='advertising'&&user.role==='admin'&&<AdvertisingView csrfToken={csrf} cities={cities} categories={categories}/>}
       {route==='stats'&&user.role==='admin'&&<StatsView csrfToken={csrf}/>}
-      {route==='settings'&&<div className="space-y-4"><section className="bg-white border rounded-xl p-6"><h1 className="font-bold">نگهداری پایگاه داده</h1><div className="flex flex-wrap gap-2 mt-3">{user.role==='admin'&&<button className="bg-blue-700 text-white rounded p-2 text-sm" onClick={async()=>{const r=await runWebMigrations(csrf);setNotice(r.message||r.error);if(r.ok) await refresh();}}>اجرای مایگریشن‌ها</button>}{user.role==='admin'&&<button className="border border-slate-300 bg-white hover:bg-slate-50 rounded p-2 text-sm font-semibold" onClick={async()=>{const r=await updateSeoSchema(csrf);setNotice(r.message||r.error);}}>آماده‌سازی جدول قوانین سئو (۴۱۰/۳۰۱)</button>}</div>{user.role!=='admin'&&<p className="text-xs text-slate-500 mt-3">اجرای مایگریشن‌ها و آماده‌سازی جداول فقط توسط مدیر ارشد انجام می‌شود.</p>}</section>{user.role==='admin'&&<><CronHelpPanel/><StaffManager csrfToken={csrf}/><AdminMailPanel csrfToken={csrf}/><AnalyticsSettingsPanel csrfToken={csrf}/></>}<AiWorkerPanel csrfToken={csrf} isAdmin={user.role==='admin'}/></div>}
+      {route==='settings'&&<div className="space-y-4"><section className="bg-white border rounded-xl p-6"><h1 className="font-bold">نگهداری پایگاه داده</h1><div className="flex flex-wrap gap-2 mt-3">{user.role==='admin'&&<button className="bg-blue-700 text-white rounded p-2 text-sm" onClick={async()=>{const r=await runWebMigrations(csrf);setNotice(r.message||r.error);if(r.ok) await refresh();}}>اجرای مایگریشن‌ها</button>}{user.role==='admin'&&<button className="border border-slate-300 bg-white hover:bg-slate-50 rounded p-2 text-sm font-semibold" onClick={async()=>{const r=await updateSeoSchema(csrf);setNotice(r.message||r.error);}}>آماده‌سازی جدول قوانین سئو (۴۱۰/۳۰۱)</button>}</div>{user.role!=='admin'&&<p className="text-xs text-slate-500 mt-3">اجرای مایگریشن‌ها و آماده‌سازی جداول فقط توسط مدیر ارشد انجام می‌شود.</p>}</section>{user.role==='admin'&&<><CronHelpPanel/><StaffManager csrfToken={csrf}/><AdminMailPanel csrfToken={csrf}/><AnalyticsSettingsPanel csrfToken={csrf}/><SystemHealthPanel csrfToken={csrf}/></>}{user.role==='admin'&&<AiTasksQueuePanel csrfToken={csrf}/>}<AiWorkerPanel csrfToken={csrf} isAdmin={user.role==='admin'}/></div>}
       </>}
     </main></div>}</div>;
 }

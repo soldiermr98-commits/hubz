@@ -25,6 +25,14 @@ try {
                 error_log('Apify cron failed: ' . get_class($e));
                 $summary['apify'] = ['status'=>'error'];
             }
+            // S24: بکاپ روزانهٔ خودکار دیتابیس (بیش از یک‌بار در ۲۰ ساعت اجرا نمی‌شود؛
+            // خطای بکاپ بقیهٔ کرون را ناموفق نمی‌کند و فقط در لاگ و system_backups ثبت می‌شود).
+            try {
+                $summary['backup'] = \App\Services\BackupService::runDue('cron');
+            } catch (Throwable $e) {
+                error_log('Backup cron failed: ' . get_class($e));
+                $summary['backup'] = ['status'=>'error'];
+            }
             $ok = ($summary['status'] ?? '') !== 'cache_error'
                 && ($summary['collector']['status'] ?? '') !== 'failed'
                 && !in_array($summary['apify']['status'] ?? '', ['error','fetch_error','preflight_error','start_unknown'], true);

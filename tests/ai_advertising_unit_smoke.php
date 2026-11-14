@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 // Pure synthetic adapter and validation checks; never calls a real provider or database.
 require dirname(__DIR__) . '/app/Services/AiArticleService.php';
+require dirname(__DIR__) . '/app/Services/AiServiceLogger.php';
 require dirname(__DIR__) . '/app/Services/AdvertisingService.php';
 use App\Services\AiArticleService;
 use App\Services\AdvertisingService;
@@ -64,7 +65,7 @@ check(count($requests) === 8, 'Connection tests must make exactly one request ea
 $catalog = AiArticleService::catalog();
 check($catalog['groq']['default_model'] === 'openai/gpt-oss-120b', 'Groq default wrong');
 check(array_column($catalog['groq']['suggested_models'], 'id') === ['openai/gpt-oss-120b','qwen/qwen3.8-27b'], 'Groq suggestions wrong');
-check($catalog['nvidia']['default_model'] === 'nvidia/nemotron-3.5-lightning-30b-a3b', 'NVIDIA default wrong');
+check($catalog['nvidia']['default_model'] === 'nvidia/nemotron-3.5-lightning', 'NVIDIA default wrong');
 check(!str_contains(json_encode($catalog), 'https:'), 'Public model catalog should not expose transport settings');
 foreach (['openai/gpt-oss-120b','qwen/qwen3.8-27b'] as $model) {
     $modelConfig = $config; $modelConfig['providers']['groq']['model'] = $model;

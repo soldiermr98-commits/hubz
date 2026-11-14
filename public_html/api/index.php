@@ -30,6 +30,7 @@ use App\Controllers\PaymentGatewayController;
 use App\Controllers\PublicPaymentController;
 use App\Controllers\PublicSiteController;
 use App\Controllers\ReviewQueueController;
+use App\Controllers\SystemController;
 use App\Core\Bootstrap;
 use App\Core\Cache;
 use App\Core\PaymentSandbox;
@@ -154,12 +155,19 @@ $router->post('/api/v1/ai/providers/remove', [AiProviderController::class, 'remo
 $router->post('/api/v1/ai/providers/test', [AiProviderController::class, 'test']);
 $router->get('/api/v1/ai/providers/logs', [AiProviderController::class, 'logs']);
 
-// ۶. مسیرهای صف کارهای هوش مصنوعی بدون توهم و ورکر راه دور (مرحله S5)
+// ۶. مسیرهای صف کارهای هوش مصنوعی بدون توهم و ورکر راه دور (S5 — فعال‌سازی در فاز ۳ از S24)
+// دسترسی‌ها در خود کنترلر اجرا می‌شوند: مشاهده/ثبت/اجرای دسته‌ای فقط admin|editor با CSRF؛
+// اندپوینت‌های Pull ورکر راه دور با توکن Bearer (یا نشست مدیر) و بدون CSRF (جزء استثناهای Csrf.php).
 $router->get('/api/v1/ai/tasks', [AiWorkerController::class, 'index']);
-$router->post('/api/v1/ai/tasks/enqueue', [AiWorkerController::class, 'disabled']);
-$router->post('/api/v1/ai/tasks/run-batch', [AiWorkerController::class, 'disabled']);
-$router->get('/api/v1/ai/tasks/next', [AiWorkerController::class, 'disabled']);
-$router->post('/api/v1/ai/tasks/complete', [AiWorkerController::class, 'disabled']);
+$router->post('/api/v1/ai/tasks/enqueue', [AiWorkerController::class, 'enqueue']);
+$router->post('/api/v1/ai/tasks/run-batch', [AiWorkerController::class, 'runBatch']);
+$router->get('/api/v1/ai/tasks/next', [AiWorkerController::class, 'pullNextTask']);
+$router->post('/api/v1/ai/tasks/complete', [AiWorkerController::class, 'completeTask']);
+
+// S24 — سلامت سیستم و بکاپ خودکار (فقط مدیر ارشد)
+$router->get('/api/v1/system/health', [SystemController::class, 'health']);
+$router->get('/api/v1/system/backups', [SystemController::class, 'backupsList']);
+$router->post('/api/v1/system/backup', [SystemController::class, 'backupRun']);
 
 // S9 — ماژول جامع آمار بازدید و کلیک (داشبورد، لاگ جزئیات، خروجی اکسل و پاک‌سازی خودکار)
 $router->get('/api/v1/analytics/dashboard', [AnalyticsController::class, 'dashboard']);

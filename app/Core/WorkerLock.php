@@ -17,7 +17,7 @@ final class WorkerLock
 
     private static function name(string $scope): string
     {
-        if (!in_array($scope, ['cron', 'maintenance', 'collector'], true)) {
+        if (!in_array($scope, ['cron', 'maintenance', 'collector', 'backup'], true)) {
             throw new RuntimeException('Unknown worker lock scope.');
         }
         $database = (string) Config::get('db.database', '');

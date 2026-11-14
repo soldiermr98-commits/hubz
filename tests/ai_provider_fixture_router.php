@@ -27,12 +27,12 @@ namespace App\Services {
         $noTemperature=!$gemini || !array_key_exists('temperature', $body['generationConfig'] ?? []);
         $stream=$gemini || ($body['stream'] ?? null) === false;
         $validModel=$gemini || ($groq && in_array($model,['openai/gpt-oss-120b','qwen/qwen3.8-27b'],true))
-            || ($nvidia && in_array($model,['nvidia/nemotron-3.5-lightning-30b-a3b','vendor/custom-nvidia-model'],true))
+            || ($nvidia && in_array($model,['nvidia/nemotron-3.5-lightning','vendor/custom-nvidia-model'],true))
             || (!$groq && !$nvidia && $model==='openrouter/free');
         $options=true;
         if ($groq && $model==='openai/gpt-oss-120b') $options=($body['reasoning_effort'] ?? '')==='low' && ($body['include_reasoning'] ?? null)===false && !isset($body['reasoning_format']);
         if ($groq && $model==='qwen/qwen3.8-27b') $options=($body['reasoning_effort'] ?? '')==='none' && ($body['reasoning_format'] ?? '')==='hidden' && !isset($body['include_reasoning']);
-        if ($nvidia && $model==='nvidia/nemotron-3.5-lightning-30b-a3b') $options=($body['chat_template_kwargs']['enable_thinking'] ?? true)===false;
+        if ($nvidia && $model==='nvidia/nemotron-3.5-lightning') $options=($body['chat_template_kwargs']['enable_thinking'] ?? true)===false;
         if ($nvidia && $model==='vendor/custom-nvidia-model') $options=!isset($body['chat_template_kwargs']);
         $curl->status=in_array($expected,$headers,true) && in_array($limit,[256,2048],true) && $shortPrompt && $noTemperature && $stream && $validModel && $options ? 200 : 401;
         if ($curl->status===200 && str_contains($curl->url, '/gemini-fixture-error404:')) {

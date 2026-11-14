@@ -13,8 +13,8 @@ globalThis.fetch=async(input,options={})=>{
   const url=String(input),method=options.method||'GET',body=options.body?JSON.parse(String(options.body)):null;
   calls.push({url,method,body});
   const json=(data:any)=>new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
-  if(url==='/api/v1/ai/article/providers')return json({ok:true,schema_ready:true,providers:[{id:'gemini',label:'Gemini',model:'fixture-model',available:true},{id:'groq',label:'Groq',model:'fixture',available:true},{id:'openrouter',label:'OpenRouter',model:'openrouter/free',available:false},{id:'nvidia',label:'NVIDIA',model:'nvidia/nemotron-3.5-lightning-30b-a3b',available:true}]});
-  if(url==='/api/v1/ai/article/generate')return json({ok:true,text:'متن پیشنهادی آزمایشی',provider:body.provider==='nvidia'?'NVIDIA':'Gemini',model:body.provider==='nvidia'?'nvidia/nemotron-3.5-lightning-30b-a3b':'fixture-model'});
+  if(url==='/api/v1/ai/article/providers')return json({ok:true,schema_ready:true,providers:[{id:'gemini',label:'Gemini',model:'fixture-model',available:true},{id:'groq',label:'Groq',model:'fixture',available:true},{id:'openrouter',label:'OpenRouter',model:'openrouter/free',available:false},{id:'nvidia',label:'NVIDIA',model:'nvidia/nemotron-3.5-lightning',available:true}]});
+  if(url==='/api/v1/ai/article/generate')return json({ok:true,text:'متن پیشنهادی آزمایشی',provider:body.provider==='nvidia'?'NVIDIA':'Gemini',model:body.provider==='nvidia'?'nvidia/nemotron-3.5-lightning':'fixture-model'});
   throw new Error('Unexpected request: '+url);
 };
 const pause=()=>new Promise(r=>setTimeout(r,0));
@@ -44,7 +44,7 @@ try {
   await act(async()=>{selector.value='nvidia';selector.dispatchEvent(new dom.window.Event('change',{bubbles:true}));await pause();});
   await click('ساخت متن پیشنهادی');const last=calls.filter(c=>c.url==='/api/v1/ai/article/generate').at(-1)!;
   assert.equal(last.body.provider,'nvidia','generation must use the explicitly selected provider');
-  assert(document.body.textContent?.includes('nvidia/nemotron-3.5-lightning-30b-a3b'));
+  assert(document.body.textContent?.includes('nvidia/nemotron-3.5-lightning'));
   dom.window.confirm=()=>false;
   await click('جایگزینی متن مقاله');assert.equal(insertMode,'append','cancelled replacement must not modify the article');
   dom.window.confirm=()=>true;

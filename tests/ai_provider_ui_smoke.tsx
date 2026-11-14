@@ -12,7 +12,7 @@ const rows=[
   {id:'gemini',label:'Gemini',model:'gemini-test',available:false,enabled:false,free_tier_confirmed:false,key_configured:false,source:'none',version:0,error:'',suggested_models:[{id:'gemini-3.5-flash-lite',note:'پیش‌فرض'}]},
   {id:'groq',label:'Groq',model:'openai/gpt-oss-120b',available:false,enabled:false,free_tier_confirmed:false,key_configured:false,source:'none',version:0,error:'',suggested_models:[{id:'openai/gpt-oss-120b',note:'پیش‌فرض'},{id:'qwen/qwen3.8-27b',note:'آزمایشی'}]},
   {id:'openrouter',label:'OpenRouter',model:'openrouter/free',available:false,enabled:false,free_tier_confirmed:false,key_configured:false,source:'none',version:0,error:'',suggested_models:[{id:'openrouter/free',note:'پیش‌فرض'}]},
-  {id:'nvidia',label:'NVIDIA',model:'nvidia/nemotron-3.5-lightning-30b-a3b',available:false,enabled:false,free_tier_confirmed:false,key_configured:false,source:'none',version:0,error:'',suggested_models:[{id:'nvidia/nemotron-3.5-lightning-30b-a3b',note:'پیش‌فرض'}]},
+  {id:'nvidia',label:'NVIDIA',model:'nvidia/nemotron-3.5-lightning',available:false,enabled:false,free_tier_confirmed:false,key_configured:false,source:'none',version:0,error:'',suggested_models:[{id:'nvidia/nemotron-3.5-lightning',note:'پیش‌فرض'}]},
 ];
 const secrets=new Map<string,string>();
 globalThis.fetch=async(input,options={})=>{
@@ -74,9 +74,9 @@ try {
   const nvChecks=[...nvidia.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];await click(nvChecks[1]);await click(button(nvidia,'ذخیره و تست اتصال'));
   assert.equal(requests.filter(r=>r.url==='/api/v1/ai/providers/save').at(-1)!.body.model,'vendor/custom-nvidia');
   assert.equal(requests.filter(r=>r.url==='/api/v1/ai/providers/test').at(-1)!.body.provider,'nvidia');
-  await select(nvidia.querySelector('[aria-label="مدل پیشنهادی NVIDIA"]') as HTMLSelectElement,'nvidia/nemotron-3.5-lightning-30b-a3b');
+  await select(nvidia.querySelector('[aria-label="مدل پیشنهادی NVIDIA"]') as HTMLSelectElement,'nvidia/nemotron-3.5-lightning');
   await click(button(nvidia,'ذخیره تنظیمات'));const nvSave=requests.filter(r=>r.url==='/api/v1/ai/providers/save').at(-1)!;
-  assert.equal(nvSave.body.model,'nvidia/nemotron-3.5-lightning-30b-a3b');assert.equal(nvSave.body.api_key,'','changing models preserves the NVIDIA key');
+  assert.equal(nvSave.body.model,'nvidia/nemotron-3.5-lightning');assert.equal(nvSave.body.api_key,'','changing models preserves the NVIDIA key');
   await click(button(nvidia,'حذف کلید'));assert(!nvidia.textContent?.includes('synthetic-nvidia-ui-key'));
   await act(async()=>{root.render(<AiWorkerPanel csrfToken="fixture-csrf" isAdmin={false}/>);await pause();});
   assert.equal(document.querySelector('[aria-label="کلید API Gemini"]'),null,'editor must not see management controls');

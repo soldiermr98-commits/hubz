@@ -596,6 +596,48 @@ export async function testAiProvider(provider:string,csrf:string):Promise<{ok:bo
 export async function generateAiArticle(payload:{provider:string;title:string;brief:string;facts:string;confirm_send:boolean;confirm_quota:boolean}, csrf:string): Promise<{ok:boolean;text?:string;provider?:string;model?:string;error?:string}> {
   return action('/api/v1/ai/article/generate',payload,csrf);
 }
+
+// S24 — صف کارهای هوش مصنوعی بدون توهم (ai_tasks)
+export interface AiTaskRow {
+  id: number; type: 'business_text' | 'article_draft'; target_id: number;
+  status: 'queued' | 'claimed' | 'done' | 'failed'; attempts: number;
+  model: string | null; error: string | null; claimed_at: string | null;
+  created_at: string; updated_at: string; target_title: string | null;
+}
+export interface AiTasksPayload {
+  ok: boolean; tasks: AiTaskRow[];
+  stats: { queued: number; claimed: number; done: number; failed: number };
+}
+export async function fetchAiTasks(): Promise<AiTasksPayload> {
+  return request('/api/v1/ai/tasks', { cache: 'no-store' });
+}
+export async function enqueueAiTasks(mode:'single'|'batch_all', type:'business_text'|'article_draft', targetId:number, csrf:string):Promise<{ok:boolean;enqueued_count?:number;message?:string;error?:string}> {
+  return action('/api/v1/ai/tasks/enqueue', { mode, type, target_id: targetId }, csrf);
+}
+export async function runAiTasksBatch(limit:number, csrf:string):Promise<{ok:boolean;processed?:number;succeeded?:number;failed?:number;message?:string;error?:string}> {
+  return action('/api/v1/ai/tasks/run-batch', { limit }, csrf);
+}
+
+// S24 — سلامت سیستم و بکاپ خودکار
+export interface SystemHealthCheck { id:string; label:string; status:'ok'|'warn'|'error'; detail:string }
+export interface SystemHealthPayload {
+  ok: boolean; checks: SystemHealthCheck[]; generated_at: string;
+  cron_last_run: string | null; backup_last_run: string | null;
+}
+export async function fetchSystemHealth(): Promise<SystemHealthPayload> {
+  return request('/api/v1/system/health', { cache: 'no-store' });
+}
+export interface SystemBackupRow {
+  id: number; filename: string; size_bytes: number; tables_count: number; rows_count: number;
+  trigger_source: 'cron' | 'panel' | 'cli'; status: 'ok' | 'failed';
+  duration_ms: number; created_at: string;
+}
+export async function fetchSystemBackups(): Promise<{ok:boolean;backups:SystemBackupRow[];directory:string;retention_days:number}> {
+  return request('/api/v1/system/backups', { cache: 'no-store' });
+}
+export async function runSystemBackup(csrf:string):Promise<{ok:boolean;message?:string;error?:string}> {
+  return action('/api/v1/system/backup', {}, csrf);
+}
 export interface AdBanner { id:number; version:number; title:string; alt_text:string; media_id:number; image_url:string|null; target_url:string; placement:string; city_id:number|null; category_id:number|null; starts_at:string|null; ends_at:string|null; active:number; priority:number; views_total:number|null; clicks_total:number|null; views_30:number|null; clicks_30:number|null }
 export interface AdInquiry { id:number; name:string; phone:string; message:string|null; status:'new'|'handled'; created_at:string }
 export async function fetchAdvertising(): Promise<{ok:boolean;schema_ready:boolean;reporting_schema_ready:boolean;placements:Record<string,string>;banners:AdBanner[];inquiries:AdInquiry[]}> { return request('/api/v1/advertising',{cache:'no-store'}); }

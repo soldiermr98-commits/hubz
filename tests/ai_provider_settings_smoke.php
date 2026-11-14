@@ -43,7 +43,7 @@ namespace {
         checkProvider($status['groq']['model']==='llama-3.1-8b-instant', 'Existing file model must not be silently replaced');
         checkProvider($status['groq']['default_model']==='openai/gpt-oss-120b', 'Groq default should be surfaced');
         checkProvider(array_column($status['groq']['suggested_models'],'id')===['openai/gpt-oss-120b','qwen/qwen3.8-27b'], 'Suggestions missing from management status');
-        checkProvider($status['nvidia']['source']==='none' && $status['nvidia']['model']==='nvidia/nemotron-3.5-lightning-30b-a3b' && !$status['nvidia']['enabled'], 'New NVIDIA provider must be disabled with its default');
+        checkProvider($status['nvidia']['source']==='none' && $status['nvidia']['model']==='nvidia/nemotron-3.5-lightning' && !$status['nvidia']['enabled'], 'New NVIDIA provider must be disabled with its default');
         checkProvider(!str_contains(json_encode($status), 'synthetic-legacy-key'), 'Management status leaked a key');
         $store->save('gemini','gemini-test-model','synthetic-gemini-key',true,true,0);
         $state = DB::$rows['ai_provider_v1_gemini'];
@@ -70,7 +70,7 @@ namespace {
         checkProvider(!$effective['enabled'] && $effective['api_key']==='', 'Delete silently fell back to legacy key');
         $status=array_column($store->managementStatus(),null,'id');
         checkProvider(!$status['groq']['key_configured'] && $status['groq']['source']==='panel','Deletion not visible');
-        $store->save('nvidia','nvidia/nemotron-3.5-lightning-30b-a3b','synthetic-nvidia-key',true,true,0);
+        $store->save('nvidia','nvidia/nemotron-3.5-lightning','synthetic-nvidia-key',true,true,0);
         checkProvider(!str_contains(DB::$rows['ai_provider_v1_nvidia'],'synthetic-nvidia-key'), 'NVIDIA key must be encrypted');
         $store->save('nvidia','vendor/custom-model:v2','',true,true,1);
         $nvidia=$store->effectiveConfig()['providers']['nvidia'];

@@ -381,6 +381,137 @@ final class PipelineService
             ['kind'=>$kind,'id'=>$targetId,'reason'=>$reasonCode,'payload'=>json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
     }
 
-    // Kept for older callers; no fabricated ranking or tier is derived from missing ratings.
-    public static function recalculateTiersForCityCategory(int $cityId, int $categoryId): void {}
+    /**
+     * S24 — امتیازدهی بیزی و Tierبندی واقعی برای یک ترکیب شهر×دسته.
+     *
+     * اصول صادقانگی داده (بدون توهم):
+     * - فقط امتیازهای واقعاً مشاهده‌شده در business_sources (rating + reviews_count) ملاک‌اند.
+     * - کسب‌وکارِ دارای دادهٔ ستاره: internal_score = (v/(v+m))·R + (m/(v+m))·C با m=20
+     *   و C میانگین امتیاز واقعی همان شهر×دسته (fallback سراسری؛ وگرنه 4.0).
+     * - کسب‌وکارِ بدون هیچ ستاره‌ای: از دادهٔ غیب امتیاز «ستاره‌ای» ساخته نمی‌شود؛ فقط
+     *   «نسبت تکمیل فیلدها» (۰ تا ۱) به‌عنوان نشانگر کیفیت ثبت می‌شود و tier فعلی‌اش
+     *   دست‌نخورده می‌ماند — ارتقای tier فقط با شواهد امتیاز واقعی انجام می‌شود.
+     * - Tierبندی صدکی فقط بین کسب‌وکارهای دارای امتیاز واقعی: ۲۰٪ برتر Tier A،
+     *   ۴۰٪ بعدی Tier B و بقیه Tier C.
+     */
+    public static function recalculateTiersForCityCategory(int $cityId, int $categoryId): void
+    {
+        if ($cityId <= 0 || $categoryId <= 0) {
+            throw new InvalidArgumentException('شهر و دسته برای محاسبهٔ امتیاز معتبر نیستند.');
+        }
+
+        $businesses = DB::fetchAll(
+            "SELECT b.id, b.tier, b.address, b.hours, b.lat, b.lng
+             FROM businesses b
+             WHERE b.city_id = :city AND b.category_id = :cat AND b.status = 'published'
+             ORDER BY b.id ASC",
+            ['city' => $cityId, 'cat' => $categoryId]
+        );
+        if (!$businesses) {
+            return;
+        }
+
+        // جمع امتیازهای واقعی مشاهده‌شده از همهٔ منابع هر کسب‌وکار (فقط جفت‌های معتبر rating+reviews)
+        $ratingAgg = DB::fetchAll(
+            "SELECT bs.business_id,
+                    SUM(bs.reviews_count) AS v,
+                    SUM(bs.rating * bs.reviews_count) AS weighted
+             FROM business_sources bs
+             INNER JOIN businesses b ON b.id = bs.business_id
+             WHERE b.city_id = :city AND b.category_id = :cat
+               AND bs.rating IS NOT NULL AND bs.reviews_count IS NOT NULL AND bs.reviews_count > 0
+             GROUP BY bs.business_id",
+            ['city' => $cityId, 'cat' => $categoryId]
+        );
+        $aggById = [];
+        foreach ($ratingAgg as $row) {
+            $aggById[(int) $row['business_id']] = $row;
+        }
+
+        // میانگین ستارهٔ واقعی همین شهر×دسته به‌عنوان مرکز Bayesian (C)
+        $cityCatMean = DB::fetchOne(
+            "SELECT AVG(bs.rating) AS mean_rating
+             FROM business_sources bs
+             INNER JOIN businesses b ON b.id = bs.business_id
+             WHERE b.city_id = :city AND b.category_id = :cat
+               AND bs.rating IS NOT NULL AND bs.reviews_count IS NOT NULL AND bs.reviews_count > 0",
+            ['city' => $cityId, 'cat' => $categoryId]
+        );
+        $categoryMean = $cityCatMean !== null && $cityCatMean['mean_rating'] !== null
+            ? (float) $cityCatMean['mean_rating']
+            : null;
+        if ($categoryMean === null) {
+            $globalMean = DB::fetchOne(
+                'SELECT AVG(rating) AS mean_rating FROM business_sources
+                 WHERE rating IS NOT NULL AND reviews_count IS NOT NULL AND reviews_count > 0'
+            );
+            $categoryMean = $globalMean !== null && $globalMean['mean_rating'] !== null
+                ? (float) $globalMean['mean_rating']
+                : 4.0;
+        }
+
+        // تلفن‌های ثبت‌شده برای محاسبهٔ نسبت تکمیل فیلدها (بدون ساخت امتیاز جعلی)
+        $ids = array_map(static fn(array $b): int => (int) $b['id'], $businesses);
+        $phonePlaceholders = [];
+        $phoneParams = [];
+        foreach ($ids as $i => $bid) {
+            $phonePlaceholders[] = ':phid' . $i;
+            $phoneParams['phid' . $i] = $bid;
+        }
+        $withPhone = [];
+        $phoneRows = DB::fetchAll(
+            'SELECT DISTINCT business_id FROM business_contacts
+             WHERE business_id IN (' . implode(',', $phonePlaceholders) . ") AND type IN ('phone','mobile')",
+            $phoneParams
+        );
+        foreach ($phoneRows as $row) {
+            $withPhone[(int) $row['business_id']] = true;
+        }
+
+        $m = 20;
+        $rated = [];
+        foreach ($businesses as $b) {
+            $id = (int) $b['id'];
+            $score = null;
+            if (isset($aggById[$id])) {
+                $v = max(1, (int) $aggById[$id]['v']);
+                $R = (float) $aggById[$id]['weighted'] / max(1, (float) $aggById[$id]['v']);
+                $score = ($v / ($v + $m)) * $R + ($m / ($v + $m)) * $categoryMean;
+                $rated[$id] = $score;
+            } else {
+                // بدون ستاره: نشانگر تکمیل فیلدها (۰ تا ۱)؛ نه امتیاز ستاره‌ای، نه ارتقای tier.
+                $completed = 0;
+                $fields = 4;
+                if (trim((string) ($b['address'] ?? '')) !== '') $completed++;
+                if (isset($withPhone[$id])) $completed++;
+                if (trim((string) ($b['hours'] ?? '')) !== '') $completed++;
+                if ($b['lat'] !== null && $b['lng'] !== null) $completed++;
+                $score = $fields > 0 ? round($completed / $fields, 4) : 0.0;
+            }
+            DB::query(
+                'UPDATE businesses SET internal_score = :score, updated_at = NOW() WHERE id = :id',
+                ['score' => round($score, 4), 'id' => $id]
+            );
+        }
+
+        if (!$rated) {
+            return; // هیچ شواهد امتیاز واقعی وجود ندارد؛ tierها دست‌نخورده می‌مانند.
+        }
+
+        arsort($rated);
+        $ratedIds = array_keys($rated);
+        $n = count($ratedIds);
+        $tierACount = max(1, (int) ceil($n * 0.20));
+        $tierBCount = (int) ceil($n * 0.60);
+        $tierByRank = [];
+        foreach (array_values($ratedIds) as $rank => $id) {
+            $tierByRank[$id] = $rank < $tierACount ? 'A' : ($rank < $tierBCount ? 'B' : 'C');
+        }
+        foreach ($tierByRank as $id => $tier) {
+            DB::query(
+                "UPDATE businesses SET tier = :tier, updated_at = NOW() WHERE id = :id AND status = 'published'",
+                ['tier' => $tier, 'id' => $id]
+            );
+        }
+    }
 }

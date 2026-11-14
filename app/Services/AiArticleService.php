@@ -108,12 +108,12 @@ final class AiArticleService
             'suggested_models'=>[['id'=>'openrouter/free', 'note'=>'پیش‌فرض']],
         ],
         'nvidia'=>[
-            'label'=>'NVIDIA', 'default_model'=>'nvidia/nemotron-3.5-lightning-30b-a3b', 'protocol'=>'chat',
+            'label'=>'NVIDIA', 'default_model'=>'nvidia/nemotron-3.5-lightning', 'protocol'=>'chat',
             'url'=>'https://integrate.api.nvidia.com/v1/chat/completions',
-            'suggested_models'=>[['id'=>'nvidia/nemotron-3.5-lightning-30b-a3b', 'note'=>'پیش‌فرض']],
+            'suggested_models'=>[['id'=>'nvidia/nemotron-3.5-lightning', 'note'=>'پیش‌فرض']],
             'model_options'=>[
                 // This model otherwise spends the shared output budget on thinking before answering.
-                'nvidia/nemotron-3.5-lightning-30b-a3b'=>[
+                'nvidia/nemotron-3.5-lightning'=>[
                     'temperature'=>1.0, 'chat_template_kwargs'=>['enable_thinking'=>false],
                 ],
             ],
