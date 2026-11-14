@@ -14,6 +14,7 @@ import {
   Copy,
   Check,
   Server,
+  Trash2,
 } from 'lucide-react';
 import {
   CategoryItem,
@@ -23,7 +24,9 @@ import {
   CollectorJobResult,
   ProviderStateItem,
   createCollectorJob,
+  deleteCollectorJob,
   fetchCollectorQueueState,
+  purgeCollectorJobs,
   saveCategoryItem,
   saveCategoryPackItem,
   saveCityItem,
@@ -60,6 +63,9 @@ export const CitiesAndCategoriesView: React.FC<CitiesAndCategoriesViewProps> = (
   const [queueMsg, setQueueMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [runnerLogs, setRunnerLogs] = useState<string[]>([]);
   const [runningWorker, setRunningWorker] = useState<boolean>(false);
+  // S25: وضعیت حذف رکوردهای صف (تکی / پاک‌سازی کامل)
+  const [deletingJobId, setDeletingJobId] = useState<number | null>(null);
+  const [purgingJobs, setPurgingJobs] = useState<boolean>(false);
 
   // ۱. افزودن سریع شهر فقط با یک فیلد نام (قانون بخش ۷ و ۸ UX)
   const [quickCityName, setQuickCityName] = useState<string>('');
@@ -131,6 +137,43 @@ export const CitiesAndCategoriesView: React.FC<CitiesAndCategoriesViewProps> = (
     setRunningWorker(false);
 
     await Promise.all([loadQueueData(), onRefreshData()]);
+  };
+
+  // S25: حذف یک رکورد Job از دیتابیس (بازگشت‌ناپذیر؛ کسب‌وکارهای ثبت‌شده دست‌نخورده می‌مانند)
+  const handleDeleteJob = async (job: CollectorJobItem) => {
+    const label = `${job.city_name || `شهر #${job.city_id}`} · ${job.pack_name || 'جستجوی سفارشی'} (${job.provider})`;
+    if (!window.confirm(`حذف رکورد کار #${job.id} (${label}) از دیتابیس؟\n\nاین عملیات بازگشت‌ناپذیر است، اما کسب‌وکارهایی که از این کار قبلاً ثبت شده‌اند حذف نمی‌شوند و فقط سابقهٔ خود صف پاک می‌شود.`)) return;
+
+    setDeletingJobId(job.id);
+    setQueueMsg(null);
+    const res = await deleteCollectorJob(job.id, csrfToken);
+    if (!res.ok) {
+      setQueueMsg({ type: 'err', text: res.error || 'خطا در حذف رکورد کار جمع‌آوری' });
+    } else {
+      setQueueMsg({ type: 'ok', text: res.message || `رکورد کار #${job.id} از دیتابیس حذف شد.` });
+      await loadQueueData();
+    }
+    setDeletingJobId(null);
+  };
+
+  // S25: پاک‌سازی کامل صف — همهٔ رکوردهای collector_jobs از دیتابیس حذف و شمارندهٔ شناسه ریست می‌شود
+  const handlePurgeJobs = async () => {
+    if (jobs.length === 0) {
+      setQueueMsg({ type: 'err', text: 'صف جمع‌آوری خالی است؛ چیزی برای پاک‌کردن نیست.' });
+      return;
+    }
+    if (!window.confirm(`پاک‌سازی کامل صف جمع‌آوری؟\n\nهمهٔ ${jobs.length} رکورد قابل‌مشاهده (و هر رکورد دیگر در جدول collector_jobs) برای همیشه از دیتابیس حذف می‌شوند و شناسه‌ها از ۱ دوباره شروع می‌شوند. این عملیات بازگشت‌ناپذیر است.\n\nکسب‌وکارهای قبلاً ثبت‌شده و وضعیت منابع (OSM/نشان) دست‌نخورده می‌مانند.`)) return;
+
+    setPurgingJobs(true);
+    setQueueMsg(null);
+    const res = await purgeCollectorJobs(csrfToken);
+    if (!res.ok) {
+      setQueueMsg({ type: 'err', text: res.error || 'خطا در پاک‌سازی کامل صف جمع‌آوری' });
+    } else {
+      setQueueMsg({ type: 'ok', text: res.message || 'همهٔ رکوردهای صف جمع‌آوری از دیتابیس حذف شدند.' });
+      await loadQueueData();
+    }
+    setPurgingJobs(false);
   };
 
   const handleToggleProvider = async (prov: ProviderStateItem, clearPause = false) => {
@@ -449,11 +492,20 @@ export const CitiesAndCategoriesView: React.FC<CitiesAndCategoriesViewProps> = (
                   ۲. لیست صف Jobهای جمع‌آوری (collector_jobs)
                 </h2>
                 <p className="text-xs text-slate-500 mt-1">
-                  اجرای کار روی همین هاست انجام می‌شود. با ثبت کرون، کارهای صف هر پنج دقیقه بررسی می‌شوند. تغییر خودکار منبع انجام نمی‌شود.
+                  اجرای کار روی همین هاست انجام می‌شود. با ثبت کرون، کارهای صف هر پنج دقیقه بررسی می‌شوند. تغییر خودکار منبع انجام نمی‌شود. حذف رکوردها فقط سابقهٔ صف را پاک می‌کند و به کسب‌وکارهای ثبت‌شده آسیب نمی‌زند (S25).
                 </p>
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={purgingJobs || runningWorker}
+                  onClick={handlePurgeJobs}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold rounded-lg disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {purgingJobs ? 'در حال پاک‌سازی...' : 'پاک‌سازی همهٔ رکوردها از دیتابیس'}
+                </button>
                 <button
                   type="button"
                   disabled={runningWorker}
@@ -483,13 +535,14 @@ export const CitiesAndCategoriesView: React.FC<CitiesAndCategoriesViewProps> = (
                     <th className="py-2.5 px-3 text-right font-semibold">پرووایدر</th>
                     <th className="py-2.5 px-3 text-right font-semibold">وضعیت</th>
                     <th className="py-2.5 px-3 text-right font-semibold">نتیجه (یافت‌شده / جدید / تکراری / خطا)</th>
+                    <th className="py-2.5 px-3 text-center font-semibold">حذف رکورد</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {jobs.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-8 text-center text-xs text-slate-500">
-                        هیچ Job در صف ثبت نشده است. از فرم بالا شهر و دسته‌بندی مورد نظر (مثلاً «رشت + کافه و رستوران») را ثبت کنید.
+                      <td colSpan={6} className="py-8 text-center text-xs text-slate-500">
+                        هیچ رکوردی در صف جمع‌آوری وجود ندارد. از فرم بالا شهر و دسته‌بندی مورد نظر (مثلاً «رشت + کافه و رستوران») را ثبت کنید.
                       </td>
                     </tr>
                   ) : (
@@ -538,6 +591,19 @@ export const CitiesAndCategoriesView: React.FC<CitiesAndCategoriesViewProps> = (
                             ) : (
                               <span className="text-slate-400">منتظر اجرای ورکر روی هاست</span>
                             )}
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <button
+                              type="button"
+                              disabled={deletingJobId !== null || purgingJobs}
+                              onClick={() => handleDeleteJob(j)}
+                              title={`حذف کامل رکورد #${j.id} از دیتابیس`}
+                              aria-label={`حذف رکورد کار شماره ${j.id} از دیتابیس`}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition-colors disabled:opacity-50"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              {deletingJobId === j.id ? '...' : 'حذف'}
+                            </button>
                           </td>
                         </tr>
                       );

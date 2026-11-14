@@ -90,6 +90,8 @@ $router->get('/api/v1/slug/suggest', [BusinessController::class, 'suggestSlug'])
 // ۳. مسیرهای صف جمع‌آوری خودکار (پنل ادمین + کلاینت collector-remote در مرحله S2)
 $router->get('/api/v1/collector/jobs', [CollectorController::class, 'index']);
 $router->post('/api/v1/collector/jobs', [CollectorController::class, 'createJob']);
+$router->post('/api/v1/collector/jobs/delete', [CollectorController::class, 'deleteJob']); // S25: حذف تکی رکورد
+$router->post('/api/v1/collector/jobs/purge', [CollectorController::class, 'purgeJobs']);  // S25: پاک‌سازی کامل صف
 $router->post('/api/v1/collector/providers', [CollectorController::class, 'updateProvider']);
 $router->post('/api/v1/collector/run-next', [CollectorController::class, 'runNext']);
 $router->post('/api/v1/collector/token', [CollectorController::class, 'remoteDisabled']);

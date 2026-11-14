@@ -89,6 +89,45 @@ final class CollectorController
         }
     }
 
+    /**
+     * POST /api/v1/collector/jobs/delete (S25)
+     * حذف یک رکورد Job جمع‌آوری از دیتابیس — بازگشت‌ناپذیر.
+     * کسب‌وکارهایی که از این کار قبلاً ثبت/تأیید شده‌اند دست‌نخورده می‌مانند؛
+     * فقط سابقهٔ خود صف (collector_jobs) پاک می‌شود.
+     */
+    public static function deleteJob(Request $request): void
+    {
+        Csrf::verifyOrFail($request);
+        Auth::requireRole(['admin','editor']);
+        $id = (int)$request->input('id', 0);
+        if ($id <= 0) Response::json(['ok'=>false,'error'=>'شناسهٔ کار جمع‌آوری نامعتبر است.'], 422);
+        $job = DB::fetchOne("SELECT j.id, j.status, j.provider, c.name_fa AS city_name
+            FROM collector_jobs j LEFT JOIN cities c ON c.id=j.city_id WHERE j.id=:id", ['id'=>$id]);
+        if (!$job) Response::json(['ok'=>false,'error'=>'این کار جمع‌آوری در دیتابیس پیدا نشد (احتمالاً قبلاً حذف شده است).'], 404);
+        DB::query("DELETE FROM collector_jobs WHERE id=:id", ['id'=>$id]);
+        Response::json(['ok'=>true,'message'=>'رکورد کار #'.$id.' ('.($job['city_name'] ?: 'شهر نامشخص').' · '.$job['provider'].') برای همیشه از دیتابیس حذف شد.']);
+    }
+
+    /**
+     * POST /api/v1/collector/jobs/purge (S25)
+     * پاک‌سازی کامل صف جمع‌آوری: همهٔ رکوردهای collector_jobs از دیتابیس حذف
+     * می‌شوند و شمارندهٔ شناسه از ۱ از نو شروع می‌شود. کسب‌وکارهای ثبت‌شده
+     * دست‌نخورده می‌مانند. فقط ادمین (سطح دسترسی بالاتر از حذف تکی).
+     */
+    public static function purgeJobs(Request $request): void
+    {
+        Csrf::verifyOrFail($request);
+        Auth::requireRole(['admin']);
+        $row = DB::fetchOne("SELECT COUNT(*) AS c FROM collector_jobs");
+        $count = (int)($row['c'] ?? 0);
+        if ($count === 0) Response::json(['ok'=>true,'deleted'=>0,'message'=>'صف جمع‌آوری از قبل خالی است؛ چیزی برای پاک‌کردن نبود.']);
+        DB::query("DELETE FROM collector_jobs");
+        // شمارندهٔ AUTO_INCREMENT را هم صفر می‌کنیم تا هیچ ردپایی از شناسه‌های قبلی نماند
+        // (ALTER مستقیم با exec اجرا می‌شود؛ روی هاست اشتراکی با دسترسی معمولی MySQL مجاز است)
+        DB::connection()->exec("ALTER TABLE `collector_jobs` AUTO_INCREMENT = 1");
+        Response::json(['ok'=>true,'deleted'=>$count,'message'=>$count.' رکورد از صف جمع‌آوری برای همیشه از دیتابیس حذف شد و شناسه‌ها از ۱ دوباره شروع می‌شوند.']);
+    }
+
     public static function updateProvider(Request $request): void
     {
         Csrf::verifyOrFail($request);

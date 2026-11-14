@@ -458,20 +458,22 @@ export function computeBusinessWarnings(
   return warnings;
 }
 
+// تعریف یکپارچهٔ سطر صف AI (ادغام دو تعریف تکراری S5/S24 — فیلدها منطبق با جدول ai_tasks)
 export interface AiTaskRow {
   id: number;
   type: 'business_text' | 'article_draft';
   target_id: number;
-  target_title?: string | null;
+  target_title: string | null;
   input_json: string;
   status: 'queued' | 'claimed' | 'done' | 'failed';
-  output_json?: string | null;
-  used_fields_json?: string | null;
-  model?: string | null;
+  output_json: string | null;
+  used_fields_json: string | null;
+  model: string | null;
   attempts: number;
-  error?: string | null;
+  error: string | null;
+  claimed_at: string | null;
   created_at: string;
-  updated_at?: string;
+  updated_at: string;
 }
 
 export interface AiQueueStats {
@@ -597,13 +599,7 @@ export async function generateAiArticle(payload:{provider:string;title:string;br
   return action('/api/v1/ai/article/generate',payload,csrf);
 }
 
-// S24 — صف کارهای هوش مصنوعی بدون توهم (ai_tasks)
-export interface AiTaskRow {
-  id: number; type: 'business_text' | 'article_draft'; target_id: number;
-  status: 'queued' | 'claimed' | 'done' | 'failed'; attempts: number;
-  model: string | null; error: string | null; claimed_at: string | null;
-  created_at: string; updated_at: string; target_title: string | null;
-}
+// S24 — صف کارهای هوش مصنوعی بدون توهم (ai_tasks) — اینترفیس AiTaskRow در بالای فایل تعریف یکپارچه شده است
 export interface AiTasksPayload {
   ok: boolean; tasks: AiTaskRow[];
   stats: { queued: number; claimed: number; done: number; failed: number };
@@ -900,6 +896,10 @@ export async function uploadMediaWebp(file:File, altText:string, csrf:string): P
 export async function fetchCollectorQueueState(): Promise<{jobs:CollectorJobItem[];providers:ProviderStateItem[];collector_bearer_token:string;photo_policy:string}> { return request('/api/v1/collector/jobs'); }
 export async function createCollectorJob(payload:{city_id:number;category_id?:number;pack_id?:number;provider:string;custom_query?:string},csrf:string): Promise<any> { return action('/api/v1/collector/jobs',payload,csrf); }
 export async function updateCollectorProvider(payload:{provider:string;enabled:number;priority:number;clear_pause?:boolean},csrf:string): Promise<any> { return action('/api/v1/collector/providers',payload,csrf); }
+/** S25: حذف یک رکورد Job جمع‌آوری از دیتابیس (بازگشت‌ناپذیر؛ کسب‌وکارهای ثبت‌شده دست‌نخورده می‌مانند). */
+export async function deleteCollectorJob(id:number,csrf:string): Promise<any> { return action('/api/v1/collector/jobs/delete',{id},csrf); }
+/** S25: پاک‌سازی کامل همهٔ رکوردهای صف جمع‌آوری از دیتابیس + ریست شمارندهٔ شناسه (فقط ادمین). */
+export async function purgeCollectorJobs(csrf:string): Promise<any> { return action('/api/v1/collector/jobs/purge',{},csrf); }
 export async function triggerCollectorJobRun(csrf:string): Promise<{ok:boolean;logLines:string[]}> {
   const result=await action('/api/v1/collector/run-next',{},csrf);
   return {ok:result.ok,logLines:[result.message || result.error || 'پاسخ نامعتبر', ...(result.summary ? [JSON.stringify(result.summary)] : [])]};
