@@ -2308,6 +2308,11 @@ final class PublicSiteController
             Response::json(['ok'=>false,'error'=>'رویداد نامعتبر است.'], 422);
         }
         Auth::startSessionIfNeeded();
+        // S23: محدودساز نرخ فایل‌محور بر پایهٔ IP — لایهٔ واقعی ضد سوءاستفاده؛ سقف نشست ۶۰۰/۱۰دقیقه لایهٔ دوم است.
+        // رد شدن بی‌سروصدا با ok=true پاس داده می‌شود تا بیکن کلاینت خطای کنسول نگیرد.
+        if (!\App\Core\RateLimit::allow('events-track', $req->ip(), 120, 60)) {
+            Response::json(['ok'=>true]);
+        }
         $period = (int)floor(time() / 600);
         $counter = $_SESSION['hhx_track_limit'] ?? ['period'=>$period,'count'=>0];
         if (!is_array($counter) || (int)($counter['period'] ?? 0) !== $period) $counter = ['period'=>$period,'count'=>0];

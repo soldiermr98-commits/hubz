@@ -416,12 +416,14 @@ final class MediaLibraryService
     }
 
     /**
-     * حذف امن یک یا چند تصویر از دیتابیس و حذف فیزیکی فایل‌های WebP آن‌ها از هاست
+     * حذف رسانه‌ها با گارد مصرف؛ فلگ force برای «حذف کامل اجباری» تصاویر متصل به بنر است:
+     * بنرهای متصل غیرفعال و بی‌تصویر می‌شوند و سپس رکورد + فایل‌ها کامل حذف می‌گردند.
+     * (S23 رفع باگ: قبلاً این پارامتر در امضا نبود و آرگومان سوم اندپوینت‌ها بی‌صدا نادیده می‌شد.)
      *
-     * @param array<int, mixed> $mediaIds
+     * @param int[] $mediaIds
      * @return array<string, mixed>
      */
-    public static function deleteMediaItems(array $mediaIds, bool $detachUsages = false): array
+    public static function deleteMediaItems(array $mediaIds, bool $detachUsages = false, bool $force = false): array
     {
         $ids = array_values(array_unique(array_filter(
             array_map(static fn($v): int => (int) $v, $mediaIds),
@@ -471,7 +473,7 @@ final class MediaLibraryService
                     $usages,
                     static fn(array $u): bool => ($u['type'] ?? '') === 'advertising_banner'
                 ));
-                if ($bannerUsages) {
+                if ($bannerUsages && !$force) {
                     $blocked[] = [
                         'id' => $id,
                         'reason' => 'این تصویر به بنر تبلیغاتی متصل است؛ ابتدا تصویر بنر را تغییر دهید یا بنر را حذف کنید.',
@@ -479,7 +481,11 @@ final class MediaLibraryService
                     ];
                     continue;
                 }
-                if (!$detachUsages) {
+                if ($bannerUsages && $force && self::tableExists('advertising_banners')) {
+                    // جداسازی اجباری: بنرهای متصل غیرفعال و بی‌تصویر می‌شوند تا تصویر آزاد شود
+                    DB::query('UPDATE advertising_banners SET media_id = NULL, active = 0 WHERE media_id = :id', ['id' => $id]);
+                }
+                if (!$detachUsages && !$force) {
                     $blocked[] = [
                         'id' => $id,
                         'reason' => 'این تصویر در کسب‌وکار یا مقاله استفاده شده است.',
@@ -570,11 +576,79 @@ final class MediaLibraryService
     }
 
     /**
+     * قفل اختصاصی کتابخانهٔ رسانه (فایل‌محور با flock) — هماهنگی آپلود و پاک‌سازی orphan
+     * تا فایل‌های تازه‌نوشته‌شدهٔ آپلود، پیش از ثبت در دیتابیس، قربانی پاک‌سازی هم‌زمان نشوند.
+     *
+     * @return resource|null
+     */
+    public static function acquireLibraryLock(bool $blocking = true, int $timeoutMs = 10000)
+    {
+        $base = defined('BASE_PATH') ? BASE_PATH : dirname(__DIR__, 2);
+        $dir = $base . '/storage/private';
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+            return null; // fail-open: نبود مسیر قفل نباید آپلود را از کار بیندازد
+        }
+        $fp = @fopen($dir . '/media_library.lock', 'c');
+        if (!$fp) {
+            return null;
+        }
+        if ($blocking) {
+            $deadline = microtime(true) + max(0, $timeoutMs) / 1000;
+            while (true) {
+                if (@flock($fp, LOCK_EX | LOCK_NB)) {
+                    return $fp;
+                }
+                if (microtime(true) >= $deadline) {
+                    @fclose($fp);
+                    return null; // fail-open با لاگ — جریان آپلود مهم‌تر از اطمینان کامل قفل است
+                }
+                usleep(50000);
+            }
+        }
+        if (!@flock($fp, LOCK_EX | LOCK_NB)) {
+            @fclose($fp);
+            return null;
+        }
+        return $fp;
+    }
+
+    /** @param resource|null $fp */
+    public static function releaseLibraryLock($fp): void
+    {
+        if ($fp) {
+            @flock($fp, LOCK_UN);
+            @fclose($fp);
+        }
+    }
+
+    /**
      * حذف فایل‌های orphan (بدون رکورد دیتابیس) باقی‌مانده در پوشه uploads
+     *
+     * اگر آپلود دیگری در جریان است (قفل مشغول)، پاک‌سازی با پرش امن انجام نمی‌شود
+     * تا فایل‌های تازه‌نوشته‌شده که هنوز رکورد دیتابیس ندارند حذف نشوند.
+     *
+     * @return array{deleted_files: int, freed_bytes: int, skipped?: bool}
+     */
+    public static function purgeOrphanUploadFiles(): array
+    {
+        $lock = self::acquireLibraryLock(false);
+        if ($lock === null) {
+            error_log('HX media purge skipped: upload in progress (library lock busy)');
+            return ['deleted_files' => 0, 'freed_bytes' => 0, 'skipped' => true];
+        }
+        try {
+            return self::purgeOrphanUploadFilesLocked();
+        } finally {
+            self::releaseLibraryLock($lock);
+        }
+    }
+
+    /**
+     * بدنهٔ اصلی پاک‌سازی — فقط با قفل گرفته‌شده صدا زده شود.
      *
      * @return array{deleted_files: int, freed_bytes: int}
      */
-    public static function purgeOrphanUploadFiles(): array
+    private static function purgeOrphanUploadFilesLocked(): array
     {
         $rows = DB::fetchAll('SELECT file_path_1200, file_path_800, file_path_480 FROM media');
         $known = [];

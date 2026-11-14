@@ -353,8 +353,9 @@ final class BusinessController
             $requestedStatus = 'draft';
         }
 
-        // اگر کاربر نقش editor دارد و وضعیت published انتخاب کرده، به pending_review هدایت شود
-        if ($user['role'] === 'editor' && $requestedStatus === 'published') {
+        // اگر کاربر نقش editor دارد، تصمیم‌های انتشار و مدیریت وضعیت فقط با ادمین است:
+        // published/hidden/rejected برای ویرایشگر به pending_review هدایت می‌شود (S23 بستن گپ staff)
+        if ($user['role'] === 'editor' && in_array($requestedStatus, ['published', 'hidden', 'rejected'], true)) {
             $requestedStatus = 'pending_review';
         }
 

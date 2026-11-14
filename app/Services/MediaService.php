@@ -5,7 +5,6 @@ namespace App\Services;
 
 use App\Core\DB;
 use GdImage;
-use InvalidArgumentException;
 use PDO;
 use RuntimeException;
 use Throwable;
@@ -18,6 +17,10 @@ final class MediaUploadException extends RuntimeException {}
  *
  * استثنای تبلیغاتی: GIFهای «متحرک» برای حفظ انیمیشن دست‌نخورده ذخیره می‌شوند (بدون تبدیل به WebP
  * که فقط فریم اول را نگه می‌دارد)؛ GIFهای تک‌فریمی مانند قبل به WebP بهینه تبدیل می‌شوند.
+ *
+ * S23 (تک‌تک‌سازی): این کلاس فقط «موتور آپلود» است — مدیریت کتابخانهٔ رسانه
+ * (فهرست، ویرایش Alt، حذف، پاک‌سازی orphan، نقشهٔ مصرف) منبع واحدش MediaLibraryService است
+ * و متدهای این کلاس فقط نمایندهٔ همان‌اند تا دو کپی ~۷۰۰ خطی موازی حذف شود.
  */
 final class MediaService
 {
@@ -44,35 +47,7 @@ final class MediaService
      */
     public static function dimensionGuides(): array
     {
-        return [
-            'business_cover' => [
-                'slot' => 'business_cover',
-                'title' => 'تصویر شاخص (کاور) کسب‌وکار',
-                'recommended_px' => '1200 × 800',
-                'aspect_ratio' => '3:2 افقی (یا 16:9 معادل 1200×675)',
-                'min_px' => '800 × 530',
-                'fit_mode' => 'برش هوشمند از مرکز در کارت‌ها (object-fit: cover)',
-                'note' => 'سوژه اصلی یا تابلو را در مرکز کادر قرار دهید. هر فرمتی آپلود شود، به‌صورت خودکار و ۱۰۰٪ به ۳ نسخه WebP کم‌حجم (480، 800 و 1200 پیکسل) تبدیل می‌شود و هیچ فایل JPEG یا PNG روی هاست ذخیره نخواهد شد.',
-            ],
-            'article_cover' => [
-                'slot' => 'article_cover',
-                'title' => 'تصویر شاخص مقاله و پیش‌نمایش شبکه‌های اجتماعی',
-                'recommended_px' => '1200 × 630',
-                'aspect_ratio' => '1.91:1 یا 16:9 افقی (1200×675)',
-                'min_px' => '960 × 500',
-                'fit_mode' => 'پوشش کامل هدر مقاله و کارت OpenGraph (object-fit: cover)',
-                'note' => 'ابعاد 1200×630 بهترین نمایش را هم در بالای مقاله و هم هنگام اشتراک‌گذاری لینک در شبکه‌های اجتماعی ایجاد می‌کند.',
-            ],
-            'advertising_banner' => [
-                'slot' => 'advertising_banner',
-                'title' => 'بنر تبلیغاتی جایگاه‌های عمومی سایت',
-                'recommended_px' => '1200 × 250 (تکی) یا 800 × 250 (دوتایی کنار هم)',
-                'aspect_ratio' => 'افقی 5:1 تا 3:1 (تکی تمام‌عرض یا جفت بنر دسکتاپ)',
-                'min_px' => '600 × 200',
-                'fit_mode' => 'نمایش کامل بدون برش (object-fit: contain)',
-                'note' => 'در هر جایگاه حداکثر ۲ بنر فعال کنار هم در دسکتاپ نمایش داده می‌شود. بنرها برش نمی‌خورند؛ JPG/PNG/WebP به WebP بهینه تبدیل و GIFهای متحرک با حفظ کامل انیمیشن ذخیره می‌شوند (پیشنهاد: حداکثر ۸ مگابایت).',
-            ],
-        ];
+        return MediaLibraryService::dimensionGuides();
     }
 
     /**
@@ -82,39 +57,18 @@ final class MediaService
     public static function handleUpload(array $uploadedFile, string $altText = ''): array
     {
         if (!isset($uploadedFile['error']) || is_array($uploadedFile['error'])) {
-            throw new MediaUploadException('ساختار فایل ارسالی نامعتبر است. لطفاً یک فایل تصویر انتخاب کنید.');
+            throw new MediaUploadException('پارامتر آپلود نامعتبر است.');
         }
-        if ((int) $uploadedFile['error'] !== UPLOAD_ERR_OK) {
-            throw new MediaUploadException('خطا در دریافت فایل آپلودشده. حجم فایل نباید بیشتر از ۸ مگابایت باشد.');
+        if ($uploadedFile['error'] !== UPLOAD_ERR_OK) {
+            throw new MediaUploadException('آپلود فایل کامل نشد؛ حجم یا محدودیت سرور را بررسی کنید.');
         }
-        $tmpPath = (string) ($uploadedFile['tmp_name'] ?? '');
-        $reportedSize = (int) ($uploadedFile['size'] ?? 0);
-        if ($tmpPath === '' || !is_uploaded_file($tmpPath) || !is_file($tmpPath)) {
-            throw new MediaUploadException('فایل موقت آپلود در سرور یافت نشد یا معتبر نیست.');
+        $tmpPath = (string) $uploadedFile['tmp_name'];
+        $actualSize = (int) ($uploadedFile['size'] ?? 0);
+        if ($tmpPath === '' || !is_file($tmpPath) || $actualSize <= 0 || $actualSize !== (int) (@filesize($tmpPath) ?: 0)) {
+            throw new MediaUploadException('فایل آپلودشده یافت نشد یا حجمش نامعتبر است.');
         }
-        $actualSize = @filesize($tmpPath);
-        if (
-            $reportedSize <= 0
-            || $reportedSize > self::MAX_UPLOAD_BYTES
-            || !is_int($actualSize)
-            || $actualSize <= 0
-            || $actualSize > self::MAX_UPLOAD_BYTES
-        ) {
-            throw new MediaUploadException('حجم تصویر باید حداکثر ۸ مگابایت باشد. لطفاً تصویر سبک‌تری انتخاب کنید.');
-        }
-        if (!function_exists('mb_check_encoding') || !function_exists('mb_strlen')) {
-            throw new MediaUploadException('افزونه mbstring روی سرور فعال نیست.');
-        }
-        $altText = trim($altText);
-        if (
-            !mb_check_encoding($altText, 'UTF-8')
-            || mb_strlen($altText, 'UTF-8') > 255
-            || preg_match('/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/', $altText)
-        ) {
-            throw new MediaUploadException('متن جایگزین تصویر باید معتبر و حداکثر ۲۵۵ نویسه باشد.');
-        }
-        if (!class_exists(\finfo::class)) {
-            throw new MediaUploadException('افزونه Fileinfo روی سرور فعال نیست.');
+        if ($actualSize > self::MAX_UPLOAD_BYTES) {
+            throw new MediaUploadException('حجم فایل بیش از حد مجاز است (حداکثر ۸ مگابایت).');
         }
         $finfo = new \finfo(FILEINFO_MIME_TYPE);
         $realMime = (string) $finfo->file($tmpPath);
@@ -141,15 +95,19 @@ final class MediaService
             throw new MediaUploadException('پشتیبانی WebP در افزونه GD فعال نیست؛ برای جلوگیری از ذخیره فرمت غیر WebP عملیات متوقف شد.');
         }
         $info = @getimagesize($tmpPath);
-        if (!is_array($info) || !isset($info[0], $info[1])) {
-            throw new MediaUploadException('تصویر ارسالی آسیب‌دیده است و قابل پردازش نیست.');
-        }
-        $infoMime = (string) ($info['mime'] ?? '');
-        $mimeCompatible = $infoMime === $realMime
-            || ($realMime === 'image/x-ms-bmp' && $infoMime === 'image/bmp')
-            || ($realMime === 'image/bmp' && $infoMime === 'image/x-ms-bmp');
-        if (!$mimeCompatible) {
+        if (!is_array($info) || (int) $info[0] <= 0 || (int) $info[1] <= 0) {
             throw new MediaUploadException('تصویر ارسالی آسیب‌دیده است یا هدر آن با نوع فایل هم‌خوانی ندارد.');
+        }
+
+        if ($realMime === 'image/gif' && $isAnimatedGif) {
+            $gifWidth = (int) $info[0];
+            $gifHeight = (int) $info[1];
+            if ($gifWidth < 100 || $gifHeight < 100) {
+                throw new MediaUploadException('ابعاد تصویر بسیار کوچک است (حداقل ۱۰۰×۱۰۰ پیکسل الزامی است).');
+            }
+            if ($gifWidth > self::MAX_DIMENSION || $gifHeight > self::MAX_DIMENSION || $gifWidth * $gifHeight > self::MAX_PIXELS) {
+                throw new MediaUploadException('ابعاد تصویر بسیار بزرگ است؛ هر ضلع حداکثر ۱۰٬۰۰۰ و مساحت حداکثر ۲۰ میلیون پیکسل است.');
+            }
         }
 
         $origWidth = (int) $info[0];
@@ -200,6 +158,13 @@ final class MediaService
         $uploadDir = $base . '/public_html/uploads/' . $subDir;
         if (!is_dir($uploadDir) && !@mkdir($uploadDir, 0755, true) && !is_dir($uploadDir)) {
             throw new MediaUploadException('امکان ساخت پوشه آپلود وجود ندارد. دسترسی پوشه را بررسی کنید.');
+        }
+
+        // S23 رفع race آپلود/پاک‌سازی: تا وقتی این آپلود در جریان است، پاک‌سازی orphan
+        // فایل‌های تازه‌نوشته‌شده (که هنوز رکورد دیتابیس ندارند) را حذف نمی‌کند.
+        $libraryLock = MediaLibraryService::acquireLibraryLock(true);
+        if ($libraryLock === null) {
+            error_log('HX media upload proceeded without library lock (timeout) — purge may skip this window');
         }
 
         $token = bin2hex(random_bytes(8));
@@ -398,6 +363,7 @@ final class MediaService
             throw new MediaUploadException('امکان ذخیره تصویر وجود ندارد؛ وضعیت سرور و پایگاه داده را بررسی کنید.', 0, $error);
         } finally {
             unset($srcImage);
+            MediaLibraryService::releaseLibraryLock($libraryLock);
         }
 
         return [
@@ -520,517 +486,48 @@ final class MediaService
     }
 
     /**
-     * فهرست کامل کتابخانه رسانه با اطلاعات مسیر دقیق روی هاست، حجم دیسک و محل‌های استفاده در دیتابیس
+     * S23: نمایندهٔ MediaLibraryService — منبع واحد مدیریت کتابخانهٔ رسانه.
      *
      * @param array<string, mixed> $filters
      * @return array<string, mixed>
      */
     public static function listLibrary(array $filters = []): array
     {
-        $page = max(1, (int) ($filters['page'] ?? 1));
-        $perPage = min(100, max(12, (int) ($filters['per_page'] ?? 24)));
-        $usageFilter = trim((string) ($filters['usage'] ?? 'all'));
-        $search = trim((string) ($filters['q'] ?? ''));
-
-        $rows = DB::fetchAll('SELECT m.* FROM media m ORDER BY m.id DESC');
-
-        $allIds = array_map(static fn(array $r): int => (int) $r['id'], $rows);
-        $usageMap = self::collectUsageMap($allIds);
-
-        $enriched = [];
-        $unusedCount = 0;
-        $usedCount = 0;
-        $missingFilesCount = 0;
-        $nonWebpDbCount = 0;
-        $knownRelativePaths = [];
-
-        foreach ($rows as $row) {
-            $id = (int) $row['id'];
-            $usages = $usageMap[$id] ?? [];
-            $variants = self::inspectMediaVariants($row);
-
-            foreach ($variants as $v) {
-                if ($v['web_path'] !== '') {
-                    $knownRelativePaths[$v['web_path']] = true;
-                }
-            }
-
-            $totalBytes = 0;
-            $allPresent = true;
-            $allWebp = strtolower((string) ($row['mime_type'] ?? '')) === 'image/webp';
-            foreach ($variants as $v) {
-                $totalBytes += $v['bytes'];
-                if (!$v['exists']) {
-                    $allPresent = false;
-                }
-                if (!$v['is_webp']) {
-                    $allWebp = false;
-                }
-            }
-
-            $isUsed = count($usages) > 0;
-            if ($isUsed) {
-                $usedCount++;
-            } else {
-                $unusedCount++;
-            }
-            if (!$allPresent) {
-                $missingFilesCount++;
-            }
-            if (!$allWebp) {
-                $nonWebpDbCount++;
-            }
-
-            $hasBannerLock = false;
-            foreach ($usages as $u) {
-                if ($u['type'] === 'advertising_banner') {
-                    $hasBannerLock = true;
-                    break;
-                }
-            }
-
-            $item = [
-                'id' => $id,
-                'file_path_1200' => (string) ($row['file_path_1200'] ?? ''),
-                'file_path_800' => (string) ($row['file_path_800'] ?? ''),
-                'file_path_480' => (string) ($row['file_path_480'] ?? ''),
-                'url_1200' => (string) ($row['file_path_1200'] ?? ''),
-                'url_800' => (string) ($row['file_path_800'] ?? ''),
-                'url_480' => (string) ($row['file_path_480'] ?? ''),
-                'host_path_1200' => $variants['1200']['host_path'],
-                'mime_type' => (string) ($row['mime_type'] ?? 'image/webp'),
-                'width' => (int) ($row['width'] ?? 0),
-                'height' => (int) ($row['height'] ?? 0),
-                'alt_text' => (string) ($row['alt_text'] ?? ''),
-                'uploaded_by_name' => '',
-                'created_at' => (string) ($row['created_at'] ?? ''),
-                'variants' => $variants,
-                'total_bytes' => $totalBytes,
-                'all_files_present' => $allPresent,
-                'all_webp' => $allWebp,
-                'usages' => $usages,
-                'usage_count' => count($usages),
-                'can_force_detach' => !$hasBannerLock,
-            ];
-
-            if ($usageFilter === 'used' && !$isUsed) {
-                continue;
-            }
-            if ($usageFilter === 'unused' && $isUsed) {
-                continue;
-            }
-            if ($usageFilter === 'missing_files' && $allPresent) {
-                continue;
-            }
-            if ($usageFilter === 'non_webp' && $allWebp) {
-                continue;
-            }
-
-            if ($search !== '') {
-                $haystack = implode(' ', [
-                    (string) $id,
-                    $item['alt_text'],
-                    $item['file_path_1200'],
-                    $item['host_path_1200'],
-                    implode(' ', array_map(static fn(array $u): string => (string) ($u['title'] ?? ''), $usages)),
-                ]);
-                $matched = function_exists('mb_stripos')
-                    ? mb_stripos($haystack, $search, 0, 'UTF-8') !== false
-                    : stripos($haystack, $search) !== false;
-                if (!$matched) {
-                    continue;
-                }
-            }
-
-            $enriched[] = $item;
-        }
-
-        $totalFiltered = count($enriched);
-        $offset = ($page - 1) * $perPage;
-        $pagedItems = array_slice($enriched, $offset, $perPage);
-
-        $diskStats = self::scanUploadsDirectory($knownRelativePaths);
-
-        return [
-            'items' => $pagedItems,
-            'pagination' => [
-                'page' => $page,
-                'per_page' => $perPage,
-                'total' => $totalFiltered,
-                'total_pages' => max(1, (int) ceil($totalFiltered / $perPage)),
-            ],
-            'summary' => [
-                'total_db_records' => count($rows),
-                'used_db_records' => $usedCount,
-                'unused_db_records' => $unusedCount,
-                'missing_files_records' => $missingFilesCount,
-                'non_webp_db_records' => $nonWebpDbCount,
-                'uploads_host_root' => 'public_html/uploads',
-                'disk_webp_files' => $diskStats['webp_files'],
-                'disk_non_webp_files' => $diskStats['non_webp_files'],
-                'disk_orphan_files' => $diskStats['orphan_files'],
-                'disk_total_bytes' => $diskStats['total_bytes'],
-            ],
-            'dimension_guides' => self::dimensionGuides(),
-        ];
+        return MediaLibraryService::listLibrary($filters);
     }
 
-    /**
-     * ویرایش متن جایگزین سئو (alt_text) برای یک تصویر در جدول media
-     */
+    /** S23: نمایندهٔ MediaLibraryService */
     public static function updateAltText(int $mediaId, string $altText): bool
     {
-        if ($mediaId <= 0) {
-            throw new InvalidArgumentException('شناسه رسانه نامعتبر است.');
-        }
-        $exists = DB::fetchOne('SELECT id FROM media WHERE id = :id LIMIT 1', ['id' => $mediaId]);
-        if (!$exists) {
-            return false;
-        }
-        $cleanAlt = mb_substr(trim($altText), 0, 220);
-        DB::query(
-            'UPDATE media SET alt_text = :alt WHERE id = :id',
-            ['alt' => $cleanAlt, 'id' => $mediaId]
-        );
-        return true;
+        return MediaLibraryService::updateAltText($mediaId, $altText);
     }
 
     /**
-     * حذف امن یک یا چند تصویر از دیتابیس و حذف فیزیکی فایل‌های WebP آن‌ها از هاست
+     * S23: نمایندهٔ MediaLibraryService (فلگ force همان‌جا پشتیبانی می‌شود؛ اینجا پیش‌فرض بسته است).
      *
      * @param int[] $mediaIds
      * @return array<string, mixed>
      */
     public static function deleteMediaItems(array $mediaIds, bool $detachUsages = false): array
     {
-        $ids = array_values(array_unique(array_filter(
-            array_map(static fn($v): int => (int) $v, $mediaIds),
-            static fn(int $id): bool => $id > 0
-        )));
-        if (!$ids) {
-            throw new InvalidArgumentException('هیچ تصویری برای حذف انتخاب نشده است.');
-        }
-        if (count($ids) > 200) {
-            throw new InvalidArgumentException('در هر نوبت حداکثر ۲۰۰ تصویر قابل حذف است.');
-        }
-
-        $placeholders = [];
-        $params = [];
-        foreach ($ids as $idx => $id) {
-            $k = 'm' . $idx;
-            $placeholders[] = ':' . $k;
-            $params[$k] = $id;
-        }
-
-        $rows = DB::fetchAll(
-            'SELECT * FROM media WHERE id IN (' . implode(',', $placeholders) . ')',
-            $params
-        );
-        if (!$rows) {
-            return [
-                'deleted_ids' => [],
-                'deleted_count' => 0,
-                'deleted_files_count' => 0,
-                'freed_bytes' => 0,
-                'blocked' => [],
-            ];
-        }
-
-        $foundIds = array_map(static fn(array $r): int => (int) $r['id'], $rows);
-        $usageMap = self::collectUsageMap($foundIds);
-
-        $blocked = [];
-        $deletableRows = [];
-
-        foreach ($rows as $row) {
-            $id = (int) $row['id'];
-            $usages = $usageMap[$id] ?? [];
-
-            if ($usages) {
-                $bannerUsages = array_values(array_filter(
-                    $usages,
-                    static fn(array $u): bool => $u['type'] === 'advertising_banner'
-                ));
-                if ($bannerUsages) {
-                    $blocked[] = [
-                        'id' => $id,
-                        'reason' => 'این تصویر به بنر تبلیغاتی متصل است؛ ابتدا تصویر بنر را تغییر دهید یا بنر را حذف کنید.',
-                        'usages' => $usages,
-                    ];
-                    continue;
-                }
-                if (!$detachUsages) {
-                    $blocked[] = [
-                        'id' => $id,
-                        'reason' => 'این تصویر در کسب‌وکار یا مقاله استفاده شده است.',
-                        'usages' => $usages,
-                    ];
-                    continue;
-                }
-            }
-
-            $deletableRows[] = $row;
-        }
-
-        if (!$deletableRows) {
-            return [
-                'deleted_ids' => [],
-                'deleted_count' => 0,
-                'deleted_files_count' => 0,
-                'freed_bytes' => 0,
-                'blocked' => $blocked,
-            ];
-        }
-
-        $pdo = DB::connection();
-        $inOuterTx = $pdo->inTransaction();
-        if (!$inOuterTx) {
-            $pdo->beginTransaction();
-        }
-
-        $hasArticleExtras = self::tableExists('article_extras');
-        $deletedIds = [];
-        $filesToUnlink = [];
-
-        try {
-            foreach ($deletableRows as $row) {
-                $id = (int) $row['id'];
-                if ($detachUsages) {
-                    DB::query('UPDATE businesses SET cover_media_id = NULL WHERE cover_media_id = :id', ['id' => $id]);
-                    DB::query('DELETE FROM business_photos WHERE media_id = :id', ['id' => $id]);
-                    if ($hasArticleExtras) {
-                        DB::query('UPDATE article_extras SET cover_media_id = NULL WHERE cover_media_id = :id', ['id' => $id]);
-                    }
-                }
-
-                DB::query('DELETE FROM media WHERE id = :id', ['id' => $id]);
-                $deletedIds[] = $id;
-
-                foreach (['file_path_1200', 'file_path_800', 'file_path_480'] as $col) {
-                    $webPath = trim((string) ($row[$col] ?? ''));
-                    if ($webPath !== '') {
-                        $filesToUnlink[$webPath] = true;
-                    }
-                }
-            }
-
-            if (!$inOuterTx) {
-                $pdo->commit();
-            }
-        } catch (Throwable $e) {
-            if (!$inOuterTx && $pdo->inTransaction()) {
-                $pdo->rollBack();
-            }
-            throw $e;
-        }
-
-        $deletedFilesCount = 0;
-        $freedBytes = 0;
-        foreach (array_keys($filesToUnlink) as $webPath) {
-            $res = self::safeUnlinkUploadFile($webPath);
-            if ($res['deleted']) {
-                $deletedFilesCount++;
-                $freedBytes += $res['bytes'];
-            }
-        }
-
-        return [
-            'deleted_ids' => $deletedIds,
-            'deleted_count' => count($deletedIds),
-            'deleted_files_count' => $deletedFilesCount,
-            'freed_bytes' => $freedBytes,
-            'blocked' => $blocked,
-        ];
+        return MediaLibraryService::deleteMediaItems($mediaIds, $detachUsages, false);
     }
 
-    /**
-     * حذف فایل‌های orphan (بدون رکورد دیتابیس) باقی‌مانده در پوشه uploads
-     *
-     * @return array{deleted_files: int, freed_bytes: int}
-     */
+    /** S23: نمایندهٔ MediaLibraryService — با قفل کتابخانه و پرش امن در هم‌زمانی با آپلود */
     public static function purgeOrphanUploadFiles(): array
     {
-        $rows = DB::fetchAll('SELECT file_path_1200, file_path_800, file_path_480 FROM media');
-        $known = [];
-        foreach ($rows as $row) {
-            foreach (['file_path_1200', 'file_path_800', 'file_path_480'] as $col) {
-                $p = trim((string) ($row[$col] ?? ''));
-                if ($p !== '') {
-                    $known[$p] = true;
-                }
-            }
-        }
-
-        $uploadsDir = self::uploadsRootFullPath();
-        if ($uploadsDir === null || !is_dir($uploadsDir)) {
-            return ['deleted_files' => 0, 'freed_bytes' => 0];
-        }
-
-        $deleted = 0;
-        $freed = 0;
-        $it = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($uploadsDir, \FilesystemIterator::SKIP_DOTS)
-        );
-        foreach ($it as $fileInfo) {
-            if (!$fileInfo->isFile() || $fileInfo->isLink()) {
-                continue;
-            }
-            $name = $fileInfo->getFilename();
-            if (in_array(strtolower($name), ['.htaccess', 'index.html', 'index.php', '.gitkeep'], true)) {
-                continue;
-            }
-            $full = $fileInfo->getPathname();
-            $relFromUploads = ltrim(str_replace('\\', '/', substr($full, strlen($uploadsDir))), '/');
-            $webPath = '/uploads/' . $relFromUploads;
-
-            if (!isset($known[$webPath])) {
-                $res = self::safeUnlinkUploadFile($webPath);
-                if ($res['deleted']) {
-                    $deleted++;
-                    $freed += $res['bytes'];
-                }
-            }
-        }
-
-        return ['deleted_files' => $deleted, 'freed_bytes' => $freed];
+        return MediaLibraryService::purgeOrphanUploadFiles();
     }
 
     /**
-     * بررسی محل‌های مصرف شناسه‌های media در تمام جداول مرتبط
+     * S23: نمایندهٔ MediaLibraryService
      *
      * @param int[] $mediaIds
      * @return array<int, array<int, array<string, mixed>>>
      */
     public static function collectUsageMap(array $mediaIds): array
     {
-        $ids = array_values(array_unique(array_filter(
-            array_map(static fn($v): int => (int) $v, $mediaIds),
-            static fn(int $id): bool => $id > 0
-        )));
-        if (!$ids) {
-            return [];
-        }
-
-        $map = [];
-
-        $bizCovers = DB::fetchAll(
-            'SELECT id, name, status, cover_media_id FROM businesses WHERE cover_media_id IS NOT NULL'
-        );
-        foreach ($bizCovers as $row) {
-            $mid = (int) ($row['cover_media_id'] ?? 0);
-            if ($mid > 0) {
-                $map[$mid][] = [
-                    'type' => 'business_cover',
-                    'label' => 'کاور کسب‌وکار',
-                    'entity_id' => (int) $row['id'],
-                    'title' => (string) ($row['name'] ?? ''),
-                    'status' => (string) ($row['status'] ?? ''),
-                ];
-            }
-        }
-
-        $bizPhotos = DB::fetchAll(
-            'SELECT bp.media_id, b.id AS business_id, b.name, b.status
-             FROM business_photos bp
-             INNER JOIN businesses b ON b.id = bp.business_id'
-        );
-        foreach ($bizPhotos as $row) {
-            $mid = (int) ($row['media_id'] ?? 0);
-            if ($mid > 0) {
-                $map[$mid][] = [
-                    'type' => 'business_photo',
-                    'label' => 'گالری کسب‌وکار',
-                    'entity_id' => (int) $row['business_id'],
-                    'title' => (string) ($row['name'] ?? ''),
-                    'status' => (string) ($row['status'] ?? ''),
-                ];
-            }
-        }
-
-        if (self::tableExists('article_extras')) {
-            try {
-                $artCovers = DB::fetchAll(
-                    'SELECT ae.cover_media_id, a.id AS article_id, a.title, a.status
-                     FROM article_extras ae
-                     INNER JOIN articles a ON a.id = ae.article_id
-                     WHERE ae.cover_media_id IS NOT NULL'
-                );
-                foreach ($artCovers as $row) {
-                    $mid = (int) ($row['cover_media_id'] ?? 0);
-                    if ($mid > 0) {
-                        $map[$mid][] = [
-                            'type' => 'article_cover',
-                            'label' => 'تصویر شاخص مقاله',
-                            'entity_id' => (int) $row['article_id'],
-                            'title' => (string) ($row['title'] ?? ''),
-                            'status' => (string) ($row['status'] ?? ''),
-                        ];
-                    }
-                }
-            } catch (Throwable) {
-            }
-        }
-
-        if (self::tableExists('article_revisions')) {
-            try {
-                $revRows = DB::fetchAll(
-                    "SELECT ar.article_id, ar.payload_json, a.title
-                     FROM article_revisions ar
-                     INNER JOIN articles a ON a.id = ar.article_id
-                     WHERE ar.status IN ('draft', 'review')"
-                );
-                foreach ($revRows as $row) {
-                    $payload = json_decode((string) ($row['payload_json'] ?? ''), true);
-                    $mid = is_array($payload) ? (int) ($payload['cover_media_id'] ?? 0) : 0;
-                    if ($mid > 0) {
-                        $alreadyListed = false;
-                        foreach ($map[$mid] ?? [] as $existing) {
-                            if ($existing['type'] === 'article_cover' && $existing['entity_id'] === (int) $row['article_id']) {
-                                $alreadyListed = true;
-                                break;
-                            }
-                        }
-                        if (!$alreadyListed) {
-                            $map[$mid][] = [
-                                'type' => 'article_revision',
-                                'label' => 'پیش‌نویس/بازبینی مقاله',
-                                'entity_id' => (int) $row['article_id'],
-                                'title' => (string) ($row['title'] ?? ''),
-                                'status' => 'draft',
-                            ];
-                        }
-                    }
-                }
-            } catch (Throwable) {
-            }
-        }
-
-        if (self::tableExists('advertising_banners')) {
-            try {
-                $banners = DB::fetchAll(
-                    'SELECT id, title, placement, active, media_id FROM advertising_banners WHERE media_id IS NOT NULL'
-                );
-                foreach ($banners as $row) {
-                    $mid = (int) ($row['media_id'] ?? 0);
-                    if ($mid > 0) {
-                        $map[$mid][] = [
-                            'type' => 'advertising_banner',
-                            'label' => 'بنر تبلیغاتی (' . (string) ($row['placement'] ?? '') . ')',
-                            'entity_id' => (int) $row['id'],
-                            'title' => (string) ($row['title'] ?? ''),
-                            'status' => ((int) ($row['active'] ?? 0) === 1) ? 'active' : 'inactive',
-                        ];
-                    }
-                }
-            } catch (Throwable) {
-            }
-        }
-
-        $filtered = [];
-        foreach ($ids as $id) {
-            $filtered[$id] = $map[$id] ?? [];
-        }
-        return $filtered;
+        return MediaLibraryService::collectUsageMap($mediaIds);
     }
 
     private static function applyExifOrientation(GdImage $image, string $filePath): GdImage
@@ -1055,159 +552,6 @@ final class MediaService
         return $image;
     }
 
-    /**
-     * @param array<string, mixed> $row
-     * @return array<string, array{web_path: string, host_path: string, exists: bool, bytes: int, is_webp: bool}>
-     */
-    private static function inspectMediaVariants(array $row): array
-    {
-        $base = defined('BASE_PATH') ? BASE_PATH : dirname(__DIR__, 2);
-        $result = [];
-        foreach (['1200' => 'file_path_1200', '800' => 'file_path_800', '480' => 'file_path_480'] as $size => $col) {
-            $webPath = trim((string) ($row[$col] ?? ''));
-            $cleanRel = ltrim($webPath, '/');
-            $hostPath = $cleanRel !== '' ? 'public_html/' . $cleanRel : '';
-            $fullPath = $cleanRel !== '' ? $base . '/public_html/' . $cleanRel : '';
-            $exists = $fullPath !== '' && is_file($fullPath);
-            $bytes = $exists ? (int) (@filesize($fullPath) ?: 0) : 0;
-            $isWebp = $webPath !== '' && str_ends_with(strtolower($webPath), '.webp');
-
-            $result[$size] = [
-                'web_path' => $webPath,
-                'host_path' => $hostPath,
-                'exists' => $exists,
-                'bytes' => $bytes,
-                'is_webp' => $isWebp,
-            ];
-        }
-        return $result;
-    }
-
-    /**
-     * @param array<string, bool> $knownRelativePaths
-     * @return array{webp_files: int, non_webp_files: int, orphan_files: int, total_bytes: int}
-     */
-    private static function scanUploadsDirectory(array $knownRelativePaths): array
-    {
-        $uploadsDir = self::uploadsRootFullPath();
-        if ($uploadsDir === null || !is_dir($uploadsDir)) {
-            return ['webp_files' => 0, 'non_webp_files' => 0, 'orphan_files' => 0, 'total_bytes' => 0];
-        }
-
-        $webpFiles = 0;
-        $nonWebpFiles = 0;
-        $orphanFiles = 0;
-        $totalBytes = 0;
-
-        try {
-            $it = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($uploadsDir, \FilesystemIterator::SKIP_DOTS)
-            );
-            foreach ($it as $fileInfo) {
-                if (!$fileInfo->isFile() || $fileInfo->isLink()) {
-                    continue;
-                }
-                $name = $fileInfo->getFilename();
-                if (in_array(strtolower($name), ['.htaccess', 'index.html', 'index.php', '.gitkeep'], true)) {
-                    continue;
-                }
-                $bytes = (int) $fileInfo->getSize();
-                $totalBytes += $bytes;
-                if (str_ends_with(strtolower($name), '.webp')) {
-                    $webpFiles++;
-                } else {
-                    $nonWebpFiles++;
-                }
-
-                $full = $fileInfo->getPathname();
-                $relFromUploads = ltrim(str_replace('\\', '/', substr($full, strlen($uploadsDir))), '/');
-                $webPath = '/uploads/' . $relFromUploads;
-                if (!isset($knownRelativePaths[$webPath])) {
-                    $orphanFiles++;
-                }
-            }
-        } catch (Throwable) {
-        }
-
-        return [
-            'webp_files' => $webpFiles,
-            'non_webp_files' => $nonWebpFiles,
-            'orphan_files' => $orphanFiles,
-            'total_bytes' => $totalBytes,
-        ];
-    }
-
-    private static function uploadsRootFullPath(): ?string
-    {
-        $base = defined('BASE_PATH') ? BASE_PATH : dirname(__DIR__, 2);
-        $path = $base . '/public_html/uploads';
-        if (!is_dir($path)) {
-            return null;
-        }
-        $real = realpath($path);
-        return $real !== false ? $real : null;
-    }
-
-    /**
-     * @return array{deleted: bool, bytes: int}
-     */
-    private static function safeUnlinkUploadFile(string $webPath): array
-    {
-        $clean = trim($webPath);
-        if (
-            $clean === ''
-            || !str_starts_with($clean, '/uploads/')
-            || str_contains($clean, '..')
-            || str_contains($clean, '\\')
-            || str_contains($clean, "\0")
-        ) {
-            return ['deleted' => false, 'bytes' => 0];
-        }
-
-        $uploadsRoot = self::uploadsRootFullPath();
-        if ($uploadsRoot === null) {
-            return ['deleted' => false, 'bytes' => 0];
-        }
-
-        $base = defined('BASE_PATH') ? BASE_PATH : dirname(__DIR__, 2);
-        $candidate = $base . '/public_html/' . ltrim($clean, '/');
-        if (!is_file($candidate) || is_link($candidate)) {
-            return ['deleted' => false, 'bytes' => 0];
-        }
-
-        $realFile = realpath($candidate);
-        if ($realFile === false || !str_starts_with($realFile, $uploadsRoot . DIRECTORY_SEPARATOR)) {
-            return ['deleted' => false, 'bytes' => 0];
-        }
-
-        $baseName = strtolower(basename($realFile));
-        if (in_array($baseName, ['.htaccess', 'index.html', 'index.php', '.gitkeep'], true)) {
-            return ['deleted' => false, 'bytes' => 0];
-        }
-
-        $bytes = (int) (@filesize($realFile) ?: 0);
-        $deleted = @unlink($realFile);
-
-        if ($deleted) {
-            $parentDir = dirname($realFile);
-            if ($parentDir !== $uploadsRoot && str_starts_with($parentDir, $uploadsRoot . DIRECTORY_SEPARATOR)) {
-                @rmdir($parentDir);
-            }
-        }
-
-        return ['deleted' => $deleted, 'bytes' => $deleted ? $bytes : 0];
-    }
-
-    private static function tableExists(string $table): bool
-    {
-        try {
-            return DB::fetchOne("SHOW TABLES LIKE '{$table}'") !== null;
-        } catch (Throwable) {
-            return false;
-        }
-    }
-
-    /** Parse conventional PHP memory_limit values; -1 means unlimited. */
     private static function memoryLimitBytes(): ?int
     {
         $value = trim((string) ini_get('memory_limit'));
