@@ -106,6 +106,13 @@ final class CollectorRunner
             $finished = DB::query("UPDATE collector_jobs SET status=:status,result_json=:result,error=:error,updated_at=NOW() WHERE id=:id AND status='running' AND attempts=:attempt",
                 ['status'=>$status,'result'=>json_encode($summary, JSON_UNESCAPED_UNICODE),'error'=>$summary['last_error'],'id'=>$jobId,'attempt'=>$attempt])->rowCount();
             if ($finished !== 1) throw new RuntimeException('مالکیت کار تغییر کرده است؛ نتیجه اجرا نیاز به بررسی دارد.');
+            // S27 فاز ۶ — بستن حلقهٔ امتیاز بیزی: پس از پایان هر جاب جمع‌آوری، Tier همان شهر×دسته بازمحاسبه می‌شود
+            // تا مرتب‌سازی پیش‌فرض صفحات فرود شهر×دسته همیشه روی تازه‌ترین شواهد واقعی باشد.
+            try {
+                PipelineService::recalculateTiersForCityCategory((int)$job['city_id'], $targetCategoryId);
+            } catch (Throwable $e) {
+                error_log('Tier recalc after collector job #' . $jobId . ': ' . $e->getMessage());
+            }
             return ['ran'=>true,'job_id'=>$jobId,'status'=>$status,'summary'=>$summary,
                 'message'=>$status === 'done' ? 'کار اجرا شد؛ موارد جدید منتظر بازبینی‌اند.' : 'کار با خطاهای ثبت‌شده پایان یافت.'];
         } catch (Throwable $e) {

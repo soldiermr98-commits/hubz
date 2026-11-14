@@ -2327,3 +2327,38 @@ a:hover {
   .hx-detail-side, .hx-subnav, .hx-detail-gallery .hx-gallery-more { display: none !important; }
   .hx-detail-grid-main { grid-template-columns: 1fr; }
 }
+
+/* ============================================================================
+   S27 — فاز ۶ سئو: بلوک آمار محلی، FAQ داینامیک، چیپ مقایسه امتیاز،
+   چیپ دسته‌های هم‌شهر و باکس مقالات مرتبط در صفحات شهر×دسته و تکی
+   ============================================================================ */
+.hx-local-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.8rem; margin: 1.1rem 0 0; }
+.hx-local-stat { border: 1px solid var(--hx-brand-border); border-radius: 14px; background: #fff; padding: 0.85rem 0.9rem; text-align: center; }
+.hx-local-stat b { display: block; font-size: 1.28rem; font-weight: 900; color: var(--hx-lapis-900); line-height: 1.4; }
+.hx-local-stat span { display: block; margin-top: 0.15rem; font-size: 0.74rem; font-weight: 600; color: var(--hx-slate-500); }
+.hx-local-intro { margin: 0.9rem 0 0; padding: 0.9rem 1rem; border-radius: 14px; background: #f2f7ff; border: 1px solid #d7e6fb; color: #29405e; font-size: 0.88rem; line-height: 2; }
+@media (max-width: 640px) { .hx-local-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.hx-cat-faq { margin-top: 2.2rem; }
+.hx-cat-faq h2 { margin: 0 0 0.7rem; font-size: 1.08rem; font-weight: 900; color: var(--hx-lapis-900); display: flex; align-items: center; gap: 0.45rem; }
+.hx-cat-faq .hx-faq-list { display: grid; gap: 0.6rem; }
+
+.hx-cat-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.9rem 0 0; }
+.hx-cat-chip { display: inline-flex; align-items: center; gap: 0.3rem; border: 1px solid var(--hx-brand-border); background: #fff; color: var(--hx-lapis-900); border-radius: 999px; padding: 0.38rem 0.8rem; font-size: 0.8rem; font-weight: 700; text-decoration: none; transition: border-color .15s, box-shadow .15s; }
+.hx-cat-chip:hover { border-color: #3b82f6; box-shadow: 0 3px 12px rgba(4, 8, 20, 0.08); }
+.hx-cat-chip small { color: var(--hx-slate-500); font-weight: 600; }
+
+.hx-rating-compare { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; margin-top: 0.6rem; padding: 0.6rem 0.85rem; border-radius: 12px; background: #f2f7ff; border: 1px solid #d7e6fb; font-size: 0.82rem; color: #29405e; }
+.hx-rating-compare b { color: var(--hx-lapis-900); }
+.hx-rating-compare .hx-compare-up { color: #15803d; font-weight: 800; }
+.hx-rating-compare .hx-compare-down { color: #b45309; font-weight: 800; }
+.hx-rating-compare .hx-compare-flat { color: var(--hx-slate-600); font-weight: 700; }
+
+.hx-rel-articles { margin-top: 1rem; display: grid; gap: 0.55rem; }
+.hx-rel-article { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.7rem 0.9rem; border: 1px solid var(--hx-brand-border); border-radius: 12px; background: #fff; text-decoration: none; transition: border-color .15s; }
+.hx-rel-article:hover { border-color: #3b82f6; }
+.hx-rel-article strong { font-size: 0.88rem; font-weight: 800; color: var(--hx-lapis-900); }
+.hx-rel-article span { font-size: 0.75rem; color: var(--hx-slate-500); flex-shrink: 0; }
+
+.hx-city-cats { margin-top: 2rem; }
+.hx-city-cats h2 { margin: 0 0 0.7rem; font-size: 1.08rem; font-weight: 900; color: var(--hx-lapis-900); display: flex; align-items: center; gap: 0.45rem; }

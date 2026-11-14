@@ -124,7 +124,8 @@ final class Cache
         [$handle, $generation] = $locked;
         try {
             $content = @file_get_contents(self::resolveFilePath($uriPath));
-            if (!is_string($content) || !str_contains($content, 'public.css?v=s21.0')) return null;
+            // S27: نسخهٔ CSS جدید؛ کش‌های قدیمی (s21.0) به‌خاطر تغییر ظاهری صفحات باطل می‌شوند
+            if (!is_string($content) || !str_contains($content, 'public.css?v=s27.0')) return null;
             if (!preg_match('/\n<!-- hhx-cache-generation:([a-f0-9]{32}):(\d+) -->\z/D', $content, $cache)) return null;
             $created = (int)$cache[2];
             $now = time();

@@ -148,6 +148,7 @@ final class ReviewQueueController
         $processedCount = 0;
         $skipped = 0;
         $conflicts = 0;
+        $tierRecalcPairs = []; // S27 فاز ۶ — ترکیب‌های شهر×دسته که پس از تصمیم بازمحاسبه می‌شوند
         foreach (array_unique($cleanIds) as $rqId) {
             $pdo = DB::connection();
             $pdo->beginTransaction();
@@ -216,9 +217,11 @@ final class ReviewQueueController
                 } elseif ($kind === 'duplicate' && $decision === 'rejected') {
                     // Reviewer marked borderline duplicate warning as distinct ("مجزا است") — keep business intact
                 } elseif ($kind === 'business') {
-                    $target = DB::fetchOne("SELECT status FROM businesses WHERE id=:id FOR UPDATE", ['id'=>$targetId]);
+                    $target = DB::fetchOne("SELECT status, city_id, category_id FROM businesses WHERE id=:id FOR UPDATE", ['id'=>$targetId]);
                     if (!$target || $target['status'] !== 'pending_review') { $pdo->rollBack(); $skipped++; continue; }
                     DB::query("UPDATE businesses SET status=:status,publish_reason=:reason,last_verified_at=NOW(),updated_at=NOW() WHERE id=:id", ['status'=>$decision === 'approved'?'published':'rejected','reason'=>$decision . '_in_review_queue','id'=>$targetId]);
+                    // S27 فاز ۶ — تغییر وضعیت انتشار، ترکیب شهر×دسته را برای بازمحاسبه Tier ثبت می‌کند
+                    $tierRecalcPairs[(int)$target['city_id'] . ':' . (int)$target['category_id']] = [(int)$target['city_id'], (int)$target['category_id']];
                     if ($decision === 'rejected') {
                         DB::query("UPDATE review_queue SET status='rejected',decided_by=:uid,decided_at=NOW() WHERE target_id=:tid AND kind='duplicate' AND status='pending'", ['uid'=>(int)$user['id'],'tid'=>$targetId]);
                     }
@@ -281,6 +284,15 @@ final class ReviewQueueController
                 throw $e;
             } finally {
                 if ($commitAttempted) Cache::flushAll();
+            }
+        }
+
+        // S27 فاز ۶ — بازمحاسبه امتیاز بیزی/Tier پس از همهٔ تصمیم‌ها (خارج از تراکنش‌ها)
+        foreach ($tierRecalcPairs as $pair) {
+            try {
+                PipelineService::recalculateTiersForCityCategory($pair[0], $pair[1]);
+            } catch (\Throwable $e) {
+                error_log('Tier recalc after review decision: ' . $e->getMessage());
             }
         }
 

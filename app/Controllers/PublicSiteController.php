@@ -18,6 +18,7 @@ use App\Services\ArticleText;
 use App\Services\BusinessSeoService;
 use App\Services\BusinessUrlService;
 use App\Services\CommentService;
+use App\Services\AiContentService;
 use App\Services\MapLinks;
 use App\Services\Normalizer;
 use App\Services\SponsorshipStatus;
@@ -468,14 +469,37 @@ final class PublicSiteController
                 'cat_id'  => (int)$biz['category_id'],
                 'id'      => (int)$biz['id'],
             ],
-            3
+            3,
+            0,
+            self::bayesianOrderSql()
         );
+
+        // S27 فاز ۶ — میانگین واقعی همین دسته در همین شهر برای چیپ مقایسه امتیاز
+        $categoryMean = null;
+        try {
+            $meanRow = DB::fetchOne(
+                "SELECT AVG(bs.rating) AS mean_rating
+                 FROM business_sources bs
+                 INNER JOIN businesses b ON b.id = bs.business_id
+                 WHERE b.city_id = :city AND b.category_id = :cat AND b.status = 'published'
+                   AND bs.rating BETWEEN 1 AND 5 AND bs.reviews_count > 0",
+                ['city' => (int)$biz['city_id'], 'cat' => (int)$biz['category_id']]
+            );
+            $categoryMean = $meanRow && $meanRow['mean_rating'] !== null ? (float)$meanRow['mean_rating'] : null;
+        } catch (Throwable) { /* مقایسه اختیاری است */ }
+
+        // S27 فاز ۶ — گاردریل ایندکس: رکورد فقیر تا تکمیل داده noindex,follow می‌گیرد
+        $poorRecord = self::isPoorBusinessRecord($biz, $contacts, $providerRatings, (int)$commentStats['count']);
+        // S27 فاز ۶ — صف AI برای Tier A/B بدون توضیحات (فقط cache-miss؛ بعد از تصمیم گاردریل)
+        if (!$poorRecord) {
+            self::maybeEnqueueAiBusinessText($biz);
+        }
 
         $baseUrl = self::baseUrl();
         $canonical = $baseUrl . BusinessUrlService::path((string)$biz['city_slug'], (string)$biz['slug']);
         $detailUrl = BusinessUrlService::path((string)$biz['city_slug'], (string)$biz['slug']);
 
-        // اسکیمای LocalBusiness استاندارد؛ aggregateRating فقط از امتیاز واقعی منبع بیرونی
+        // اسکیمای LocalBusiness استاندارد؛ aggregateRating فقط وقتی رأی واقعی با تعداد نظر > 0 وجود دارد
         $localBizSchema = [
             '@context' => 'https://schema.org',
             '@type'    => 'LocalBusiness',
@@ -506,13 +530,25 @@ final class PublicSiteController
         if (!empty($biz['hours'])) {
             $localBizSchema['openingHours'] = (string)$biz['hours'];
         }
-        if (!empty($providerRatings)) {
+        // S27 فاز ۶ — تصویر کاور برای غنای ریک‌ریزالت (فقط مسیر معتبر آپلود داخلی)
+        $cover800 = (string)($mediaItems[0]['file_path_800'] ?? '');
+        if (preg_match('~^/uploads/[a-zA-Z0-9_/-]+\.(?:webp|jpg|jpeg|png)$~iD', $cover800)) {
+            $localBizSchema['image'] = $baseUrl . $cover800;
+        }
+        // S27 فاز ۶ — sameAs برای اتصال انتیتی (وب‌سایت/اینستاگرام رسمی)
+        $sameAs = [];
+        if (!empty($contacts['website'])) $sameAs[] = (string)$contacts['website'];
+        if (!empty($contacts['instagram'])) $sameAs[] = 'https://instagram.com/' . ltrim((string)$contacts['instagram'], '@');
+        if ($sameAs) $localBizSchema['sameAs'] = array_values(array_unique($sameAs));
+        // اصلاح فاز ۶: AggregateRating فقط با reviewCount > 0 — بدون این شرط، کنسول جستجو خطا می‌دهد
+        if (!empty($providerRatings) && (int)$providerRatings[0]['reviews_count'] > 0) {
             $best = $providerRatings[0];
             $localBizSchema['aggregateRating'] = [
                 '@type'       => 'AggregateRating',
                 'ratingValue' => (float)$best['rating'],
                 'reviewCount' => (int)$best['reviews_count'],
                 'bestRating'  => 5,
+                'worstRating' => 1,
             ];
         }
 
@@ -555,9 +591,13 @@ final class PublicSiteController
                         <?php
                             $src = (string)($g['file_path_1200'] ?? $g['file_path_800'] ?? '');
                             if (!preg_match('~^/uploads/[a-zA-Z0-9_/-]+\.(?:webp|jpg|jpeg|png|gif)$~iD', $src)) continue;
+                            // S27 فاز ۶ — ابعاد صریح برای حذف CLS در Core Web Vitals موبایل
+                            $gw = max(1, (int)($g['width'] ?? 0));
+                            $gh = max(1, (int)($g['height'] ?? 0));
+                            $dims = ($gw > 0 && $gh > 0) ? ' width="' . $gw . '" height="' . $gh . '"' : ' width="1200" height="800"';
                         ?>
                         <figure class="hx-gallery-item<?= $gIdx === 0 ? ' hx-gallery-main' : '' ?>">
-                            <img src="<?= self::e($src) ?>" alt="<?= self::e((string)($g['alt_text'] ?? $biz['name'])) ?>" loading="<?= $gIdx === 0 ? 'eager' : 'lazy' ?>" decoding="async">
+                            <img src="<?= self::e($src) ?>" alt="<?= self::e((string)($g['alt_text'] ?? $biz['name'])) ?>" loading="<?= $gIdx === 0 ? 'eager' : 'lazy' ?>" decoding="async"<?= $dims ?> style="width:100%;height:100%;object-fit:cover;">
                         </figure>
                     <?php endforeach; ?>
                     <?php if ($galleryCount > 4): ?>
@@ -605,6 +645,7 @@ final class PublicSiteController
                             <span>از ۵ · <?= self::e(self::faDigits((string)$commentStats['count'])) ?> دیدگاه حامی‌هاب</span>
                         </div>
                     <?php endif; ?>
+                    <?= self::renderRatingCompare($biz, $categoryMean, (string)$biz['category_name_fa'], (string)$biz['city_name_fa']) ?>
                     <div class="hx-provider-chips">
                         <?php foreach ($providerRatings as $pr): ?>
                             <span class="hx-provider-chip">
@@ -877,6 +918,13 @@ final class PublicSiteController
                 </div>
             </section>
             <?php endif; ?>
+
+            <?php if (!$poorRecord): ?>
+            <section class="hx-section hx-city-cats" aria-label="سایر دسته‌های برتر در <?= self::e($biz['city_name_fa']) ?>">
+                <h2 class="hx-section-title"><?= self::icon('award') ?> سایر دسته‌های برتر در <?= self::e($biz['city_name_fa']) ?></h2>
+                <?= self::renderCategoryChips((int)$biz['city_id'], (string)$biz['city_slug'], (string)$biz['city_name_fa'], (int)$biz['category_id']) ?>
+            </section>
+            <?php endif; ?>
         </main>
         <?php
         $bodyHtml = (string)ob_get_clean();
@@ -886,6 +934,7 @@ final class PublicSiteController
             'description'  => 'اطلاعات کامل، آدرس، شماره تماس و مسیریابی ' . $biz['name'] . ' در ' . $biz['city_name_fa'] . ' بر اساس رتبه‌بندی حامی‌هاب گیلان.',
             'canonical'    => $canonical,
             'og_type'      => 'place',
+            'noindex'      => $poorRecord, // S27 فاز ۶ — گاردریل ضد Thin Content
             'schemas'      => [$localBizSchema, $breadcrumbSchema],
             'ad_placement' => 'business',
             'ad_city_id'   => (int)$biz['city_id'],
@@ -1040,6 +1089,11 @@ final class PublicSiteController
             return;
         }
 
+        // S27 فاز ۶ — آمار واقعی این ترکیب برای الگوی Title، بلوک آمار محلی و FAQ داینامیک
+        $catStats = self::fetchCityCatStats((int)$city['id'], (int)$category['id']);
+        $catFaqs = self::buildCityCatFaqs($catStats, (string)$category['name_fa'], (string)$city['name_fa']);
+        $totalCount = $catStats['total'];
+
         $page = max(1, min(100000, is_scalar($_GET['page'] ?? 1) ? (int)($_GET['page'] ?? 1) : 1));
         $minRating = is_scalar($_GET['min_rating'] ?? 0) ? (string)($_GET['min_rating'] ?? '0') : '0';
         $minReviews = is_scalar($_GET['min_reviews'] ?? 0) ? (string)($_GET['min_reviews'] ?? '0') : '0';
@@ -1062,7 +1116,8 @@ final class PublicSiteController
         if ($minRating !== '0') { $where .= ' AND rs.rating >= :min_rating'; $query['min_rating'] = $minRating; }
         if ($minReviews !== '0') { $where .= ' AND rs.reviews_count >= :min_reviews'; $query['min_reviews'] = $minReviews; }
         if ($search !== '') { $where .= ' AND (b.name LIKE :search1 OR b.address LIKE :search2)'; $query['search1']='%' . $search . '%'; $query['search2']='%' . $search . '%'; }
-        $businesses = self::fetchPublishedBusinesses($where, $query, 51, ($page - 1) * 50);
+        // S27 فاز ۶ — مرتب‌سازی پیش‌فرض بر اساس امتیاز بیزی (Tier A/B/C + internal_score)
+        $businesses = self::fetchPublishedBusinesses($where, $query, 51, ($page - 1) * 50, self::bayesianOrderSql());
         $hasNext = count($businesses) > 50;
         if ($hasNext) array_pop($businesses);
         $baseUrl = self::baseUrl();
@@ -1080,15 +1135,27 @@ final class PublicSiteController
             self::buildBreadcrumbSchema([
                 ['name' => 'حامی‌هاب گیلان', 'url' => $baseUrl . '/'],
                 ['name' => (string)$city['name_fa'], 'url' => $baseUrl . '/city/' . $city['slug'] . '/'],
-                ['name' => (string)$category['name_fa'] . ' در ' . $city['name_fa'], 'url' => $canonical],
+                ['name' => (string)$category['name_fa'] . ' در ' . $city['name_fa'], 'url' => $baseUrl . $path],
             ]),
             [
                 '@context'        => 'https://schema.org',
                 '@type'           => 'ItemList',
                 'name'            => 'بهترین ' . $category['name_fa'] . ' در ' . $city['name_fa'],
-                'itemListElement' => self::buildItemListElements($businesses, $baseUrl),
+                'itemListElement' => self::buildItemListElements(array_slice($businesses, 0, 10), $baseUrl),
             ],
         ];
+        // S27 فاز ۶ — اسکیمای FAQPage فقط با پرسش‌های داینامیک واقعی این ترکیب
+        if ($catFaqs) {
+            $schemas[] = [
+                '@context'    => 'https://schema.org',
+                '@type'       => 'FAQPage',
+                'mainEntity'  => array_map(static fn(array $f): array => [
+                    '@type'      => 'Question',
+                    'name'       => $f['question'],
+                    'acceptedAnswer' => ['@type' => 'Answer', 'text' => $f['answer']],
+                ], $catFaqs),
+            ];
+        }
 
         $mapMarkers = self::extractMarkers($businesses);
 
@@ -1104,10 +1171,10 @@ final class PublicSiteController
             <header class="hx-catalog-hero">
                 <div>
                     <div class="hx-catalog-eyebrow"><?= self::icon('location', 'hx-icon hx-icon-sm') ?> راهنمای <?= self::e($city['name_fa']) ?></div>
-                    <h1><?= self::e($category['name_fa']) ?> در <?= self::e($city['name_fa']) ?></h1>
+                    <h1>بهترین <?= self::e($category['name_fa']) ?> در <?= self::e($city['name_fa']) ?>؛ لیست <?= self::e(self::faDigits((string)$totalCount)) ?> مرکز برتر</h1>
                     <p>گزینه‌ها را ببینید، امتیاز و نشانی را مقایسه کنید و با هر مجموعه مستقیم تماس بگیرید.</p>
                 </div>
-                <span class="hx-catalog-count"><?= count($businesses) ?> مورد در این صفحه</span>
+                <span class="hx-catalog-count"><?= self::e(self::faDigits((string)$totalCount)) ?> مرکز در این فهرست</span>
             </header>
 
             <form method="get" action="<?= self::e($path) ?>" class="hx-catalog-filters" aria-label="جستجو و فیلتر نتایج">
@@ -1126,7 +1193,8 @@ final class PublicSiteController
                 <?php if ($search !== '' || $minRating !== '0' || $minReviews !== '0'): ?><a class="hx-clear-filters" href="<?= self::e($path) ?>">پاک کردن فیلترها</a><?php endif; ?>
             </form>
 
-            <div class="hx-catalog-results-heading"><div><h2>گزینه‌های <?= self::e($category['name_fa']) ?></h2><p>جایگاه ویژه مشخص است؛ بقیه بر اساس آخرین امتیاز معتبر و تعداد نظر مرتب شده‌اند.</p></div></div>
+            <div class="hx-catalog-results-heading"><div><h2>گزینه‌های <?= self::e($category['name_fa']) ?></h2><p>جایگاه ویژه مشخص است؛ بقیه بر اساس امتیاز بیزی (رأی‌های واقعی با وزن تعداد نظر) مرتب شده‌اند.</p></div></div>
+            <?= self::renderLocalStatsBlock($catStats, (string)$category['name_fa'], (string)$city['name_fa']) ?>
             <?php if (!empty($mapMarkers)): ?>
                 <?= self::renderLazyMapBox($mapMarkers, 'موقعیت گزینه‌های این صفحه', true) ?>
             <?php endif; ?>
@@ -1148,16 +1216,35 @@ final class PublicSiteController
                         <?php if ($hasNext): ?><a class="hx-btn hx-btn-outline" href="<?= self::e($pageUrl($page + 1)) ?>">صفحه بعد</a><?php endif; ?>
                     </nav>
                 <?php endif; ?>
+                <?= self::renderRelatedArticlesBox(self::fetchRelatedCityCatArticles((int)$city['id'], (int)$category['id']), (string)$category['name_fa'], (string)$city['name_fa']) ?>
+            </section>
+
+            <?= self::renderCatFaqBlock($catFaqs, (string)$category['name_fa'], (string)$city['name_fa']) ?>
+
+            <section class="hx-city-cats" aria-label="سایر دسته‌های برتر در <?= self::e($city['name_fa']) ?>">
+                <h2><?= self::icon('award') ?> سایر دسته‌های برتر در <?= self::e($city['name_fa']) ?></h2>
+                <?= self::renderCategoryChips((int)$city['id'], (string)$city['slug'], (string)$city['name_fa'], (int)$category['id']) ?>
             </section>
         </main>
         <?php
         $bodyHtml = (string)ob_get_clean();
 
+        // S27 فاز ۶ — الگوی Title رقابتی با تعداد واقعی مراکز
+        $totalCountFa = self::faDigits((string)$totalCount);
+        $pageTitle = 'بهترین ' . $category['name_fa'] . ' در ' . $city['name_fa'] . ' | لیست ' . $totalCountFa . ' مرکز برتر بر اساس امتیاز کاربران';
+        if ($page > 1) $pageTitle .= ' | صفحه ' . self::faDigits((string)$page);
+        $pageDesc = 'رتبه‌بندی ' . $totalCountFa . ' ' . $category['name_fa'] . ' در شهر ' . $city['name_fa'] . ' بر اساس امتیاز کاربران و بازبینی تحریریه؛ نشانی، تلفن و مسیریابی هر مجموعه در حامی‌هاب گیلان.';
+        if ($catStats['mean_rating'] !== null) {
+            $pageDesc .= ' میانگین امتیاز: ' . rtrim(rtrim(number_format($catStats['mean_rating'], 2, '.', ''), '0'), '.') . ' از ۵.';
+        }
+
         $fullHtml = self::renderLayout([
-            'title'       => 'بهترین ' . $category['name_fa'] . ' در ' . $city['name_fa'] . ' | رتبه‌بندی و آدرس | حامی‌هاب',
-            'description' => 'معرفی بهترین ' . $category['name_fa'] . ' در شهر ' . $city['name_fa'] . ' با اطلاعات موجود، آدرس و شماره تماس.',
+            'title'       => $pageTitle,
+            'description' => $pageDesc,
             'canonical'   => $canonical,
             'og_type'     => 'website',
+            // S27 فاز ۶ — ترکیب بدون هیچ کسب‌وکار منتشرشده تا تکمیل داده noindex می‌گیرد
+            'noindex'     => ($totalCount === 0 && $page === 1 && $minRating === '0' && $minReviews === '0' && $search === ''),
             'schemas'     => $schemas,
             'ad_placement'=> 'category',
             'ad_city_id'  => (int)$city['id'],
@@ -2217,44 +2304,87 @@ final class PublicSiteController
         $baseUrl = self::baseUrl();
 
         $urls = [
-            ['loc' => $baseUrl . '/', 'priority' => '1.0', 'changefreq' => 'daily'],
-            ['loc' => $baseUrl . '/advertise', 'priority' => '0.6', 'changefreq' => 'monthly'],
+            ['loc' => $baseUrl . '/', 'priority' => '1.0', 'changefreq' => 'daily', 'lastmod' => null],
+            ['loc' => $baseUrl . '/advertise', 'priority' => '0.6', 'changefreq' => 'monthly', 'lastmod' => null],
         ];
 
         $cities = DB::fetchAll("SELECT slug FROM cities WHERE is_active = 1 ORDER BY id ASC");
-        $categories = DB::fetchAll("SELECT slug FROM categories WHERE is_active = 1 ORDER BY sort ASC");
 
         foreach ($cities as $c) {
             $urls[] = [
                 'loc'        => $baseUrl . '/city/' . rawurlencode((string)$c['slug']) . '/',
                 'priority'   => '0.9',
                 'changefreq' => 'daily',
+                'lastmod'    => null,
             ];
-            foreach ($categories as $cat) {
-                $urls[] = [
-                    'loc'        => $baseUrl . '/city/' . rawurlencode((string)$c['slug']) . '/' . rawurlencode((string)$cat['slug']) . '/',
-                    'priority'   => '0.8',
-                    'changefreq' => 'weekly',
-                ];
-            }
         }
 
-        $articles = DB::fetchAll("SELECT slug FROM articles WHERE status = 'published' ORDER BY id DESC");
+        // S27 فاز ۶ — فقط ترکیب‌های شهر×دسته که حداقل یک کسب‌وکار منتشرشده دارند (ضد Thin Content)
+        $combos = DB::fetchAll(
+            "SELECT c.slug AS city_slug, cat.slug AS cat_slug, MAX(b.updated_at) AS lastmod
+             FROM businesses b
+             INNER JOIN cities c ON c.id = b.city_id AND c.is_active = 1
+             INNER JOIN categories cat ON cat.id = b.category_id AND cat.is_active = 1
+             WHERE b.status = 'published'
+             GROUP BY c.id, cat.id, c.slug, cat.slug
+             ORDER BY c.id ASC, cat.id ASC"
+        );
+        foreach ($combos as $combo) {
+            $urls[] = [
+                'loc'        => $baseUrl . '/city/' . rawurlencode((string)$combo['city_slug']) . '/' . rawurlencode((string)$combo['cat_slug']) . '/',
+                'priority'   => '0.8',
+                'changefreq' => 'weekly',
+                'lastmod'    => !empty($combo['lastmod']) ? substr((string)$combo['lastmod'], 0, 10) : null,
+            ];
+        }
+
+        $articles = DB::fetchAll("SELECT slug, updated_at FROM articles WHERE status = 'published' ORDER BY id DESC");
         foreach ($articles as $a) {
             $urls[] = [
                 'loc'        => $baseUrl . '/' . rawurlencode((string)$a['slug']) . '/',
                 'priority'   => '0.9',
                 'changefreq' => 'weekly',
+                'lastmod'    => !empty($a['updated_at']) ? substr((string)$a['updated_at'], 0, 10) : null,
             ];
         }
 
-        $businesses = DB::fetchAll("SELECT b.slug,c.slug AS city_slug FROM businesses b INNER JOIN cities c ON c.id=b.city_id WHERE b.status = 'published' ORDER BY b.id DESC LIMIT 1000");
+        // S27 فاز ۶ — فقط کسب‌وکارهای ایندکس‌پذیر (رکورد فقیر = noindex → خارج از sitemap)
+        $indexablePredicate = "(
+            (b.short_desc IS NOT NULL AND TRIM(b.short_desc) <> '')
+            OR EXISTS (SELECT 1 FROM business_comments bc WHERE bc.business_id = b.id AND bc.status = 'approved')
+            OR EXISTS (SELECT 1 FROM business_sources bs WHERE bs.business_id = b.id AND bs.rating BETWEEN 1 AND 5 AND bs.reviews_count > 0)
+            OR EXISTS (SELECT 1 FROM business_contacts bc2 WHERE bc2.business_id = b.id AND bc2.type IN ('phone','mobile'))
+            OR (b.address IS NOT NULL AND TRIM(b.address) <> '')
+        )";
+        $businesses = DB::fetchAll(
+            "SELECT b.slug, c.slug AS city_slug, b.updated_at AS lastmod
+             FROM businesses b
+             INNER JOIN cities c ON c.id = b.city_id
+             WHERE b.status = 'published' AND {$indexablePredicate}
+             ORDER BY b.id DESC LIMIT 2000"
+        );
         foreach ($businesses as $b) {
             $urls[] = [
                 'loc'        => $baseUrl . BusinessUrlService::path((string)$b['city_slug'], (string)$b['slug']),
                 'priority'   => '0.8',
                 'changefreq' => 'weekly',
+                'lastmod'    => !empty($b['lastmod']) ? substr((string)$b['lastmod'], 0, 10) : null,
             ];
+        }
+
+        // S27 فاز ۶ — اگر جدول قوانین سئو (migration 012) موجود است، مسیرهای 410/301 از sitemap حذف می‌شوند
+        if (BusinessSeoService::schemaReady()) {
+            $rulePaths = [];
+            foreach (DB::fetchAll("SELECT path FROM seo_url_rules WHERE http_status IN (301, 410) LIMIT 10000") as $r) {
+                $rulePaths[BusinessSeoService::normalizePath((string)$r['path'])] = true;
+            }
+            if ($rulePaths) {
+                $urls = array_values(array_filter($urls, static function (array $u) use ($baseUrl, $rulePaths): bool {
+                    $loc = (string)$u['loc'];
+                    $path = $loc !== '' && str_starts_with($loc, $baseUrl) ? substr($loc, strlen($baseUrl)) : $loc;
+                    return !isset($rulePaths[BusinessSeoService::normalizePath($path)]);
+                }));
+            }
         }
 
         header('Content-Type: application/xml; charset=utf-8');
@@ -2263,6 +2393,9 @@ final class PublicSiteController
         foreach ($urls as $u) {
             echo "  <url>\n";
             echo "    <loc>" . htmlspecialchars($u['loc'], ENT_XML1, 'UTF-8') . "</loc>\n";
+            if (!empty($u['lastmod'])) {
+                echo "    <lastmod>" . htmlspecialchars((string)$u['lastmod'], ENT_XML1, 'UTF-8') . "</lastmod>\n";
+            }
             echo "    <changefreq>{$u['changefreq']}</changefreq>\n";
             echo "    <priority>{$u['priority']}</priority>\n";
             echo "  </url>\n";
@@ -2798,10 +2931,28 @@ final class PublicSiteController
         return ArticleText::render($text);
     }
 
-    private static function fetchPublishedBusinesses(string $whereClause, array $params, int $limit, int $offset = 0): array
+    /**
+     * S27 فاز ۶ — ترتیب پیش‌فرض ضد thin-content صفحات شهر×دسته:
+     * جایگاه ویژه (پرداختی) → Tier A → Tier B → Tier C → امتیاز بیزی (internal_score)
+     * → امتیاز منبع → تعداد نظر → نام. Tier و internal_score توسط
+     * PipelineService::recalculateTiersForCityCategory با مدل بیزی (m=20) محاسبه می‌شوند.
+     */
+    private static function bayesianOrderSql(): string
+    {
+        return "
+            ORDER BY COALESCE(bp.active,0) DESC,
+                     (b.tier = 'A') DESC, (b.tier = 'B') DESC,
+                     b.internal_score DESC, b.id ASC,
+                     (rs.rating IS NULL) ASC, rs.rating DESC, rs.reviews_count DESC, b.name ASC";
+    }
+
+    private static function fetchPublishedBusinesses(string $whereClause, array $params, int $limit, int $offset = 0, ?string $orderOverride = null): array
     {
         $limit = max(1, min(100, $limit));
         $offset = max(0, $offset);
+        $orderSql = $orderOverride !== null && trim($orderOverride) !== ''
+            ? trim($orderOverride)
+            : 'ORDER BY COALESCE(bp.active,0) DESC, (rs.rating IS NULL) ASC, rs.rating DESC, rs.reviews_count DESC, b.name ASC, b.id ASC';
         $sql = "
             SELECT b.*,
                    c.name_fa AS city_name_fa, c.slug AS city_slug,
@@ -2833,11 +2984,324 @@ final class PublicSiteController
             )
             LEFT JOIN business_source_rating_dates rd ON rd.business_source_id=rs.id
             WHERE {$whereClause}
-            ORDER BY COALESCE(bp.active,0) DESC, (rs.rating IS NULL) ASC,
-                     rs.rating DESC, rs.reviews_count DESC, b.name ASC, b.id ASC
+            {$orderSql}
             LIMIT {$limit} OFFSET {$offset}
         ";
         return DB::fetchAll($sql, $params);
+    }
+
+    /**
+     * S27 فاز ۶ — آمار واقعی و سمت سرور یک ترکیب شهر×دسته برای بلوک آمار محلی و FAQ داینامیک.
+     * هر عدد از دیتابیس می‌آید؛ هیچ متنی از پیش‌ساخته یا ساختگی تولید نمی‌شود.
+     *
+     * @return array{total:int,rated:int,mean_rating:float|null,total_reviews:int,top3:list<array<string,mixed>>}
+     */
+    private static function fetchCityCatStats(int $cityId, int $categoryId): array
+    {
+        $stats = ['total' => 0, 'rated' => 0, 'mean_rating' => null, 'total_reviews' => 0, 'top3' => []];
+        try {
+            $totalRow = DB::fetchOne(
+                "SELECT COUNT(*) AS total FROM businesses WHERE city_id = :city AND category_id = :cat AND status = 'published'",
+                ['city' => $cityId, 'cat' => $categoryId]
+            );
+            $stats['total'] = (int)($totalRow['total'] ?? 0);
+            if ($stats['total'] === 0) {
+                return $stats;
+            }
+
+            // میانگین امتیاز واقعی (فقط منابع دارای رأی) — همان مرکز Bayesian فاز ۳
+            $agg = DB::fetchOne(
+                "SELECT COUNT(DISTINCT bs.business_id) AS rated,
+                        AVG(bs.rating) AS mean_rating,
+                        SUM(bs.reviews_count) AS total_reviews
+                 FROM business_sources bs
+                 INNER JOIN businesses b ON b.id = bs.business_id
+                 WHERE b.city_id = :city AND b.category_id = :cat AND b.status = 'published'
+                   AND bs.rating BETWEEN 1 AND 5 AND bs.reviews_count > 0",
+                ['city' => $cityId, 'cat' => $categoryId]
+            );
+            $stats['rated'] = (int)($agg['rated'] ?? 0);
+            $stats['mean_rating'] = $agg['mean_rating'] !== null ? (float)$agg['mean_rating'] : null;
+            $stats['total_reviews'] = (int)($agg['total_reviews'] ?? 0);
+
+            // سه مرکز برتر بر اساس همان امتیاز بیزی نمایشی (Tier + internal_score + رأی)
+            $stats['top3'] = self::fetchPublishedBusinesses(
+                "b.city_id = :city AND b.category_id = :cat AND b.status = 'published'",
+                ['city' => $cityId, 'cat' => $categoryId],
+                3,
+                0,
+                self::bayesianOrderSql()
+            );
+        } catch (Throwable) {
+            // آمار هرگز جلوی رندر صفحه را نمی‌گیرد؛ صفحه با بلوک خالی سرو می‌شود.
+        }
+        return $stats;
+    }
+
+    /**
+     * S27 فاز ۶ — سه پرسش متداول داینامیک از دیتای واقعی همان شهر×دسته.
+     *
+     * @param array{total:int,rated:int,mean_rating:float|null,total_reviews:int,top3:list<array<string,mixed>>} $stats
+     * @return list<array{question:string,answer:string}>
+     */
+    private static function buildCityCatFaqs(array $stats, string $categoryName, string $cityName): array
+    {
+        if ($stats['total'] <= 0) {
+            return [];
+        }
+        $totalFa = self::faDigits((string)$stats['total']);
+        $topNames = [];
+        foreach (array_slice($stats['top3'], 0, 3) as $row) {
+            $name = trim((string)($row['name'] ?? ''));
+            if ($name !== '') $topNames[] = '«' . $name . '»';
+        }
+
+        $faqs = [];
+        if ($topNames) {
+            $faqs[] = [
+                'question' => 'بهترین ' . $categoryName . ' شهر ' . $cityName . ' کدام‌ها هستند؟',
+                'answer' => 'بر اساس امتیاز کاربران و بازبینی تحریریه حامی‌هاب، برترین‌ها در حال حاضر ' . implode('، ', $topNames) . ' هستند. رتبه‌بندی به‌صورت خودکار از امتیاز واقعی منابع به‌روز می‌شود.',
+            ];
+        }
+        $faqs[] = [
+            'question' => 'در حال حاضر چند ' . $categoryName . ' در شهر ' . $cityName . ' ثبت شده است؟',
+            'answer' => 'در فهرست حامی‌هاب ' . $totalFa . ' ' . $categoryName . ' در شهر ' . $cityName . ' با اطلاعات تماس، نشانی و امتیاز ثبت شده است؛ این فهرست با گردآوری خودکار و بازبینی تحریریه همیشه به‌روز نگه داشته می‌شود.',
+        ];
+        if ($stats['mean_rating'] !== null && $stats['total_reviews'] > 0) {
+            $meanFa = rtrim(rtrim(number_format($stats['mean_rating'], 2, '.', ''), '0'), '.');
+            $faqs[] = [
+                'question' => 'میانگین امتیاز ' . $categoryName . '‌های شهر ' . $cityName . ' چقدر است؟',
+                'answer' => 'میانگین امتیاز ثبت‌شده برای ' . $categoryName . '‌های شهر ' . $cityName . ' در حامی‌هاب ' . $meanFa . ' از ۵ است؛ این عدد از مجموع ' . self::faDigits((string)$stats['total_reviews']) . ' نظر واقعی ثبت‌شده در منابع مرجع محاسبه می‌شود.',
+            ];
+        }
+        return array_slice($faqs, 0, 3);
+    }
+
+    /**
+     * S27 فاز ۶ — بلوک آمار محلی بالای فهرست صفحه شهر×دسته.
+     *
+     * @param array{total:int,rated:int,mean_rating:float|null,total_reviews:int,top3:list<array<string,mixed>>} $stats
+     */
+    private static function renderLocalStatsBlock(array $stats, string $categoryName, string $cityName): string
+    {
+        if ($stats['total'] <= 0) {
+            return '';
+        }
+        $meanFa = $stats['mean_rating'] !== null ? rtrim(rtrim(number_format($stats['mean_rating'], 2, '.', ''), '0'), '.') : null;
+        ob_start();
+        ?>
+        <div class="hx-local-stats" role="group" aria-label="آمار این فهرست">
+            <div class="hx-local-stat"><b dir="ltr"><?= self::e(self::faDigits((string)$stats['total'])) ?></b><span><?= self::e($categoryName) ?> ثبت‌شده</span></div>
+            <?php if ($stats['rated'] > 0): ?><div class="hx-local-stat"><b dir="ltr"><?= self::e(self::faDigits((string)$stats['rated'])) ?></b><span>مجموعه دارای امتیاز کاربران</span></div><?php endif; ?>
+            <?php if ($meanFa !== null): ?><div class="hx-local-stat"><b dir="ltr"><?= self::e($meanFa) ?></b><span>میانگین امتیاز از ۵</span></div><?php endif; ?>
+            <?php if ($stats['total_reviews'] > 0): ?><div class="hx-local-stat"><b dir="ltr"><?= self::e(self::faDigits((string)$stats['total_reviews'])) ?></b><span>نظر واقعی ثبت‌شده</span></div><?php endif; ?>
+        </div>
+        <p class="hx-local-intro">فهرست کامل <?= self::e($categoryName) ?>‌های شهر <?= self::e($cityName) ?> بر اساس امتیاز کاربران رتبه‌بندی شده است؛ امتیازها از منابع مرجع گردآوری و توسط تحریریه حامی‌هاب بازبینی می‌شود. برای هر مجموعه، نشانی، شماره تماس و موقعیت روی نقشه در دسترس است تا انتخاب سریع و مطمئن باشد.</p>
+        <?php
+        return (string)ob_get_clean();
+    }
+
+    /**
+     * S27 فاز ۶ — بلوک پرسش‌های متداول داینامیک انتهای صفحه شهر×دسته.
+     * @param list<array{question:string,answer:string}> $faqs
+     */
+    private static function renderCatFaqBlock(array $faqs, string $categoryName, string $cityName): string
+    {
+        if (!$faqs) {
+            return '';
+        }
+        ob_start();
+        ?>
+        <section class="hx-cat-faq" aria-label="پرسش‌های متداول <?= self::e($categoryName) ?> در <?= self::e($cityName) ?>">
+            <h2><?= self::icon('message-question') ?> پرسش‌های متداول درباره <?= self::e($categoryName) ?> در <?= self::e($cityName) ?></h2>
+            <div class="hx-faq-list">
+                <?php foreach ($faqs as $faq): ?>
+                    <details class="hx-faq-item">
+                        <summary><?= self::e($faq['question']) ?></summary>
+                        <p class="hx-faq-a"><?= self::e($faq['answer']) ?></p>
+                    </details>
+                <?php endforeach; ?>
+            </div>
+        </section>
+        <?php
+        return (string)ob_get_clean();
+    }
+
+    /**
+     * S27 فاز ۶ — دسته‌های هم‌شهر با تعداد کسب‌وکار منتشرشده (لینک‌سازی داخلی افقی).
+     * @return list<array<string,mixed>>
+     */
+    private static function fetchSiblingCategories(int $cityId, int $excludeCategoryId, int $limit = 8): array
+    {
+        try {
+            return DB::fetchAll(
+                "SELECT cat.slug, cat.name_fa, COUNT(b.id) AS biz_count
+                 FROM businesses b
+                 INNER JOIN categories cat ON cat.id = b.category_id AND cat.is_active = 1
+                 WHERE b.city_id = :city AND b.status = 'published' AND b.category_id != :excl
+                 GROUP BY cat.id, cat.slug, cat.name_fa
+                 ORDER BY biz_count DESC, cat.name_fa ASC
+                 LIMIT " . max(1, min(16, $limit)),
+                ['city' => $cityId, 'excl' => $excludeCategoryId]
+            );
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    private static function renderCategoryChips(int $cityId, string $citySlug, string $cityNameFa, int $excludeCategoryId): string
+    {
+        $cats = self::fetchSiblingCategories($cityId, $excludeCategoryId);
+        if (!$cats) {
+            return '';
+        }
+        ob_start();
+        ?>
+        <div class="hx-cat-chips" aria-label="سایر دسته‌های برتر در <?= self::e($cityNameFa) ?>">
+            <?php foreach ($cats as $cat): ?>
+                <a class="hx-cat-chip" href="/city/<?= self::e($citySlug) ?>/<?= self::e((string)$cat['slug']) ?>/">
+                    <?= self::icon('location', 'hx-icon hx-icon-sm') ?>
+                    <?= self::e((string)$cat['name_fa']) ?> در <?= self::e($cityNameFa) ?>
+                    <small dir="ltr">(<?= self::e(self::faDigits((string)(int)$cat['biz_count'])) ?>)</small>
+                </a>
+            <?php endforeach; ?>
+        </div>
+        <?php
+        return (string)ob_get_clean();
+    }
+
+    /**
+     * S27 فاز ۶ — مقالات منتشرشده‌ی مرتبط با همان شهر×دسته (اتصال AiArticleService/ArticleService به صفحات فرود).
+     * @return list<array<string,mixed>>
+     */
+    private static function fetchRelatedCityCatArticles(int $cityId, int $categoryId, int $limit = 3): array
+    {
+        try {
+            return DB::fetchAll(
+                "SELECT slug, title, year_label
+                 FROM articles
+                 WHERE city_id = :city AND category_id = :cat AND status = 'published'
+                 ORDER BY published_at DESC, id DESC
+                 LIMIT " . max(1, min(6, $limit)),
+                ['city' => $cityId, 'cat' => $categoryId]
+            );
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    /** @param list<array<string,mixed>> $articles */
+    private static function renderRelatedArticlesBox(array $articles, string $categoryName, string $cityName): string
+    {
+        if (!$articles) {
+            return '';
+        }
+        ob_start();
+        ?>
+        <div class="hx-rel-articles-wrap" style="margin-top:1.6rem;">
+            <h2 style="margin:0 0 0.7rem;font-size:1.05rem;font-weight:900;color:var(--hx-lapis-900);">راهنماهای مرتبط <?= self::icon('arrow-left', 'hx-icon hx-icon-sm') ?></h2>
+            <div class="hx-rel-articles">
+                <?php foreach ($articles as $art): ?>
+                    <a class="hx-rel-article" href="/<?= self::e((string)$art['slug']) ?>/">
+                        <strong><?= self::e((string)$art['title']) ?></strong>
+                        <span><?= self::e((string)($art['year_label'] ?? '')) ?></span>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <?php
+        return (string)ob_get_clean();
+    }
+
+    /**
+     * S27 فاز ۶ — گاردریل ایندکس (ضد Thin Content).
+     * رکورد «فقیر» یعنی: بدون توضیحات، بدون هیچ دیدگاه/امتیاز واقعی، و بدون تلفن یا نشانی.
+     * چنین رکوردهایی تا تکمیل داده، noindex,follow می‌گیرند تا از بودجه خزش و رتبه کل دامنه محافظت شوند.
+     *
+     * @param array<string,mixed> $biz
+     * @param array<string,string> $contacts
+     */
+    private static function isPoorBusinessRecord(array $biz, array $contacts, array $providerRatings, int $approvedComments): bool
+    {
+        $hasDesc = trim((string)($biz['short_desc'] ?? '')) !== '';
+        if ($hasDesc || $approvedComments > 0) {
+            return false;
+        }
+        foreach ($providerRatings as $pr) {
+            if ((float)($pr['rating'] ?? 0) > 0 && (int)($pr['reviews_count'] ?? 0) > 0) {
+                return false; // امتیاز واقعی منبع بیرونی = رکورد قابل استناد
+            }
+        }
+        $hasPhone = isset($contacts['phone']) || isset($contacts['mobile']) || !empty($biz['phone']);
+        $hasAddress = trim((string)($biz['address'] ?? '')) !== '';
+        return !($hasPhone || $hasAddress);
+    }
+
+    /**
+     * S27 فاز ۶ — استفاده از صف AI (فاز ۳) برای کسب‌وکارهای Tier A/B بدون توضیحات.
+     * فقط روی cache-miss اجرا می‌شود؛ اگر تسک در صف/در حال اجرا باشد دوباره ثبت نمی‌کند.
+     * هر خطا هیچ‌وقت جلوی رندر صفحه را نمی‌گیرد.
+     *
+     * @param array<string,mixed> $biz
+     */
+    private static function maybeEnqueueAiBusinessText(array $biz): void
+    {
+        try {
+            $tier = (string)($biz['tier'] ?? 'C');
+            if (!in_array($tier, ['A', 'B'], true)) return;
+            if (trim((string)($biz['short_desc'] ?? '')) !== '') return;
+            $id = (int)($biz['id'] ?? 0);
+            if ($id <= 0) return;
+            $open = DB::fetchOne(
+                "SELECT id FROM ai_tasks WHERE type = 'business_text' AND target_id = :tid AND status IN ('queued','claimed') LIMIT 1",
+                ['tid' => $id]
+            );
+            if ($open !== null) return;
+            $done = DB::fetchOne(
+                "SELECT id FROM ai_tasks WHERE type = 'business_text' AND target_id = :tid AND status = 'done' LIMIT 1",
+                ['tid' => $id]
+            );
+            if ($done !== null) return; // قبلاً تولید شده؛ پر کردن متن وظیفه اعمال‌کننده است
+            $input = AiContentService::buildBusinessInput($id);
+            if ($input === null) return;
+            DB::query(
+                "INSERT INTO ai_tasks (type, target_id, input_json, status, attempts) VALUES ('business_text', :tid, :input_json, 'queued', 0)",
+                ['tid' => $id, 'input_json' => json_encode($input, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]
+            );
+        } catch (Throwable $e) {
+            error_log('HX ai-topup (non-fatal): ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * S27 فاز ۶ — چیپ مقایسه امتیاز مجموعه با میانگین واقعی همان دسته در همان شهر.
+     *
+     * @param array<string,mixed> $biz
+     */
+    private static function renderRatingCompare(array $biz, ?float $categoryMean, string $categoryName, string $cityName): string
+    {
+        $rating = $biz['source_rating'] ?? null;
+        if ($rating === null || $categoryMean === null || $categoryMean <= 0) {
+            return '';
+        }
+        $diff = (float)$rating - $categoryMean;
+        $ratingFa = rtrim(rtrim(number_format((float)$rating, 2, '.', ''), '0'), '.');
+        $meanFa = rtrim(rtrim(number_format($categoryMean, 2, '.', ''), '0'), '.');
+        $diffAbsFa = rtrim(rtrim(number_format(abs($diff), 2, '.', ''), '0'), '.');
+        if (abs($diff) < 0.05) {
+            $mark = '<span class="hx-compare-flat">هم‌سطح میانگین</span>';
+            $sentence = 'امتیاز این مجموعه تقریباً برابر میانگین است.';
+        } elseif ($diff > 0) {
+            $mark = '<span class="hx-compare-up">+' . self::e($diffAbsFa) . '</span>';
+            $sentence = 'امتیاز این مجموعه بالاتر از میانگین است.';
+        } else {
+            $mark = '<span class="hx-compare-down">-' . self::e($diffAbsFa) . '</span>';
+            $sentence = 'امتیاز این مجموعه کمی پایین‌تر از میانگین است.';
+        }
+        return '<div class="hx-rating-compare" role="note">' . self::icon('star', 'hx-icon hx-icon-sm')
+            . '<span>امتیاز <b dir="ltr">' . self::e($ratingFa) . '</b> در مقایسه با میانگین <b dir="ltr">' . self::e($meanFa) . '</b> ' . self::e($categoryName) . '‌های شهر ' . self::e($cityName) . '</span>'
+            . $mark
+            . '<span class="hx-visually-hidden">' . self::e($sentence) . '</span></div>';
     }
 
     private static function ratingLabel(array $biz): string
@@ -2971,7 +3435,7 @@ final class PublicSiteController
     <meta name="twitter:image" content="<?= self::e($baseUrl) ?>/assets/img/logo-hx-card.webp">
     <link rel="preload" href="/assets/fonts/Vazirmatn-Regular.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/assets/fonts/Vazirmatn-Bold.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="/assets/css/public.css?v=s21.0">
+    <link rel="stylesheet" href="/assets/css/public.css?v=s27.0">
     <!-- hhx-ad-until:<?= $adUntil ?> -->
     <!-- hhx-sponsor-until:<?= max(0, (int)($data['sponsor_until'] ?? 0)) ?> -->
     <?php foreach ($schemas as $schema):
