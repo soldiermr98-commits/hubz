@@ -118,13 +118,17 @@ final class MediaController
             Response::json(['ok' => false, 'error' => 'لیست شناسه‌های رسانه نامعتبر است.'], 422);
         }
         $detachUsages = !empty($input['detach_usages']);
+        $force = !empty($input['force']);
+        if ($force) {
+            $detachUsages = true;
+        }
 
         try {
-            $result = MediaLibraryService::deleteMediaItems($rawIds, $detachUsages);
+            $result = MediaLibraryService::deleteMediaItems($rawIds, $detachUsages, $force);
             if ($result['deleted_count'] === 0 && !empty($result['blocked'])) {
                 Response::json([
                     'ok' => false,
-                    'error' => 'تصاویر انتخاب‌شده در حال استفاده هستند؛ برای جداسازی خودکار از کسب‌وکار/مقاله گزینه «جداسازی و حذف» را فعال کنید (تصاویر متصل به بنر تبلیغاتی ابتدا باید در بخش تبلیغات جایگزین شوند).',
+                    'error' => 'تصاویر انتخاب‌شده در حال استفاده هستند؛ برای جداسازی خودکار از کسب‌وکار/مقاله گزینه «جداسازی و حذف» را فعال کنید یا برای تصاویر متصل به بنر تبلیغاتی از «حذف کامل اجباری» استفاده کنید.',
                     'result' => $result,
                 ], 409);
             }
@@ -132,10 +136,13 @@ final class MediaController
             Cache::flushAll();
 
             $msg = sprintf(
-                '%d رکورد تصویر از دیتابیس و %d فایل WebP از هاست حذف شد.',
+                '%d رکورد تصویر از دیتابیس و %d فایل از هاست حذف شد؛ هیچ اثری از آن‌ها باقی نماند.',
                 $result['deleted_count'],
                 $result['deleted_files_count']
             );
+            if (($result['detached_banners'] ?? 0) > 0) {
+                $msg .= sprintf(' (%d بنر تبلیغاتی از این تصویر جداسازی و غیرفعال شد.)', (int) $result['detached_banners']);
+            }
             if (!empty($result['blocked'])) {
                 $msg .= sprintf(' (%d تصویر در حال استفاده نادیده گرفته شد.)', count($result['blocked']));
             }
