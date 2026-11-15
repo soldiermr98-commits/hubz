@@ -150,6 +150,9 @@ if (PaymentSandbox::enabled()) {
 // The old batch/worker mutation routes stay disabled; this new path is manual and draft-only.
 $router->get('/api/v1/ai/article/providers', [AiArticleController::class, 'status']);
 $router->post('/api/v1/ai/article/generate', [AiArticleController::class, 'generate']);
+// S29: فکت‌های واقعی مراکز منتشرشده برای دستیار مقاله — فقط خواندن، فقط پنل، بدون فراخوانی AI.
+$router->get('/api/v1/ai/article/fact-combos', [AiArticleController::class, 'factCombos']);
+$router->get('/api/v1/ai/article/facts', [AiArticleController::class, 'facts']);
 // Admin-only credential management; keys are never returned to the browser.
 $router->get('/api/v1/ai/providers/manage', [AiProviderController::class, 'index']);
 $router->post('/api/v1/ai/providers/save', [AiProviderController::class, 'save']);

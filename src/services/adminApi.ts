@@ -599,6 +599,16 @@ export async function generateAiArticle(payload:{provider:string;title:string;br
   return action('/api/v1/ai/article/generate',payload,csrf);
 }
 
+// S29 — فکت‌های واقعی مراکز منتشرشده برای دستیار مقاله (فقط خواندن؛ بدون فراخوانی AI)
+export interface AiFactCombo { city_id:number; city_name:string; category_id:number; category_name:string; total:number|string; }
+export interface AiFactsPayload { ok:boolean; facts?:string; count?:number; truncated?:boolean; chars?:number; error?:string; }
+export async function fetchAiFactCombos(): Promise<{ok:boolean;combos:AiFactCombo[]}> {
+  return request('/api/v1/ai/article/fact-combos',{cache:'no-store'});
+}
+export async function fetchAiFacts(cityId:number, categoryId:number): Promise<AiFactsPayload> {
+  return request(`/api/v1/ai/article/facts?city_id=${cityId}&category_id=${categoryId}`,{cache:'no-store'});
+}
+
 // S24 — صف کارهای هوش مصنوعی بدون توهم (ai_tasks) — اینترفیس AiTaskRow در بالای فایل تعریف یکپارچه شده است
 export interface AiTasksPayload {
   ok: boolean; tasks: AiTaskRow[];
