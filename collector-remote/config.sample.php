@@ -19,6 +19,16 @@ return [
         'batch_size' => 200,
     ],
 
+    // S30 — پس‌گیری عکس کسب‌وکارها (دانلود روی همین PC و پوش بهینه به هاست)
+    // اجرا: php collector-remote/run.php photos --limit=10
+    'photos' => [
+        'enabled' => true,          // (فعلاً صرفاً مستندسازی؛ فعال‌سازی واقعی با اجرای مود photos)
+        'limit' => 10,              // حداکثر کسب‌وکار در هر اجرا (با --limit= قابل override)
+        'width' => 1600,            // پارامتر اندازهٔ گوگل‌فوتو (=w1600)
+        'download_timeout' => 45,   // تایم‌اوت دانلود هر عکس (ثانیه)
+        'sleep_ms' => 800,          // مکث مؤدبانه بین هر عکس
+    ],
+
     'timeouts' => [
         // تایم‌اوت Overpass API (اصلاحیه ۲: TIMEOUT=90)
         'overpass_timeout' => 90,

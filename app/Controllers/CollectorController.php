@@ -4,12 +4,17 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Core\Auth;
+use App\Core\Config;
 use App\Core\Csrf;
 use App\Core\DB;
 use App\Core\Request;
 use App\Core\Response;
 use App\Services\CategorySyncService;
 use App\Services\CollectorRunner;
+use App\Services\MediaUploadException;
+use App\Services\PhotoBackfillService;
+use InvalidArgumentException;
+use Throwable;
 
 final class CollectorController
 {
@@ -30,7 +35,19 @@ final class CollectorController
              ORDER BY j.id DESC LIMIT 100"
         );
         $providers = DB::fetchAll("SELECT * FROM provider_state WHERE provider IN ('osm','neshan') ORDER BY priority ASC");
-        Response::json(['ok'=>true,'jobs'=>$jobs,'providers'=>$providers,'collector_bearer_token'=>'','photo_policy'=>'none']);
+        // S30 — آمار عکس: چند کسب‌وکار منتشرشده هنوز هیچ تصویری ندارند
+        $photoStats = [
+            'published_without_photo' => (int) (DB::fetchOne(
+                "SELECT COUNT(*) AS n
+                 FROM businesses b
+                 LEFT JOIN business_photos bp ON bp.business_id = b.id AND bp.status = 'approved'
+                 WHERE b.status = 'published' AND b.cover_media_id IS NULL AND bp.id IS NULL"
+            )['n'] ?? 0),
+            'provider_photos' => (int) (DB::fetchOne(
+                "SELECT COUNT(*) AS n FROM business_photos WHERE source = 'provider' AND status = 'approved'"
+            )['n'] ?? 0),
+        ];
+        Response::json(['ok'=>true,'jobs'=>$jobs,'providers'=>$providers,'collector_bearer_token'=>'','photo_policy'=>'provider_push','photo_stats'=>$photoStats]);
     }
 
     public static function createJob(Request $request): void
@@ -140,6 +157,132 @@ final class CollectorController
             DB::query("UPDATE provider_state SET enabled=:en,priority=:prio,paused_until=NULL,last_error=NULL WHERE provider=:p", ['en'=>$enabled,'prio'=>$priority,'p'=>$provider]);
         } else DB::query("UPDATE provider_state SET enabled=:en,priority=:prio WHERE provider=:p", ['en'=>$enabled,'prio'=>$priority,'p'=>$provider]);
         Response::json(['ok'=>true,'message'=>'وضعیت منبع ذخیره شد.','providers'=>DB::fetchAll("SELECT * FROM provider_state WHERE provider IN ('osm','neshan') ORDER BY priority")]);
+    }
+
+    /**
+     * S30 — ثبت/تعویض توکن Bearer کولکتور (اندپوینت قبلاً غیرفعال بود)
+     * POST /api/v1/collector/token — فقط ادمین + CSRF
+     * توکن فقط یک‌بار در پاسخ نمایش داده می‌شود؛ باید در collector-remote/config.php کپی شود.
+     */
+    public static function setToken(Request $request): void
+    {
+        Csrf::verifyOrFail($request);
+        Auth::requireRole(['admin']);
+        $token = trim((string) $request->input('token', ''));
+        if ($token === '') {
+            $token = bin2hex(random_bytes(24)); // ۴۸ کاراکتر تصادفی
+        }
+        if (strlen($token) < 32) {
+            Response::json(['ok'=>false,'error'=>'توکن باید حداقل ۳۲ کاراکتر باشد؛ یا خالی بگذارید تا خودکار ساخته شود.'], 422);
+        }
+        DB::query(
+            "INSERT INTO settings (k, v, updated_at) VALUES ('collector_bearer_token', :v, NOW())
+             ON DUPLICATE KEY UPDATE v = VALUES(v), updated_at = NOW()",
+            ['v' => $token]
+        );
+        Response::json([
+            'ok'      => true,
+            'token'   => $token, // فقط همین یک‌بار
+            'message' => 'توکن کولکتور ذخیره شد. همین مقدار را در collector-remote/config.php (کلید bearer_token) کپی کنید؛ دوباره نمایش داده نمی‌شود.',
+        ]);
+    }
+
+    /**
+     * S30 — لیست کسب‌وکارهای بی‌عکس + کاندید URL عکس از منابع جمع‌آوری‌شده
+     * GET /api/v1/collector/photos/backfill?limit=50 — نشست مدیر یا توکن Bearer
+     * (فقط خواندن؛ دانلود و پوش واقعی عکس روی PC مدیر انجام می‌شود)
+     */
+    public static function photosBackfill(Request $request): void
+    {
+        self::verifyTokenOrSession($request);
+        $limit = max(1, min(100, (int) $request->input('limit', 50)));
+        Response::json(array_merge(['ok' => true], PhotoBackfillService::candidates($limit)));
+    }
+
+    /**
+     * S30 — دریافت تصویر بهینه‌شده از collector-remote و اتصال آن به کسب‌وکار
+     * POST /api/v1/collector/photo (multipart) — نشست مدیر یا توکن Bearer
+     *
+     * طبق سیاست S2: هاست هیچ عکسی را خودش دانلود نمی‌کند؛ فقط bytes پوش‌شده را
+     * با MediaService (فحش MIME واقعی + تبدیل WebP سه‌سایز) ذخیره می‌کند.
+     * کاور خودکار: اگر کسب‌وکار کاور نداشت، همین تصویر کاور می‌شود.
+     */
+    public static function remotePhoto(Request $request): void
+    {
+        self::verifyTokenOrSession($request);
+
+        $businessId = (int) $request->input('business_id', 0);
+        $sourceUrl = trim((string) $request->input('source_url', ''));
+        $attribution = trim((string) $request->input('attribution', ''));
+        if ($businessId <= 0) {
+            Response::json(['ok'=>false,'error'=>'شناسه کسب‌وکار (business_id) الزامی است.'], 422);
+        }
+        if ($sourceUrl !== '' && (strlen($sourceUrl) > 2048 || !preg_match('#^https://[^\s"\'<>]+$#iD', $sourceUrl))) {
+            Response::json(['ok'=>false,'error'=>'source_url معتبر نیست.'], 422);
+        }
+        if (mb_strlen($attribution) > 255) {
+            Response::json(['ok'=>false,'error'=>'attribution حداکثر ۲۵۵ کاراکتر است.'], 422);
+        }
+
+        $uploadedFile = $_FILES['image'] ?? null;
+        if (empty($uploadedFile) || !is_array($uploadedFile)) {
+            Response::json(['ok'=>false,'error'=>'فایل تصویر (فیلد image) در درخواست multipart نیست.'], 422);
+        }
+
+        try {
+            $result = PhotoBackfillService::attachUploadedPhoto(
+                $businessId,
+                [
+                    'error'    => UPLOAD_ERR_OK,
+                    'tmp_name' => (string) $uploadedFile['tmp_name'],
+                    'size'     => (int) ($uploadedFile['size'] ?? 0),
+                ],
+                $sourceUrl,
+                $attribution,
+                trim((string) $request->input('alt_text', ''))
+            );
+        } catch (MediaUploadException | InvalidArgumentException $e) {
+            Response::json(['ok'=>false,'error'=>$e->getMessage()], 422);
+        } catch (Throwable $e) {
+            error_log('Collector photo push failed: ' . get_class($e));
+            Response::json(['ok'=>false,'error'=>'پردازش و اتصال تصویر انجام نشد؛ دوباره تلاش کنید.'], 500);
+        }
+
+        if (!empty($result['duplicate'])) {
+            Response::json([
+                'ok'        => true,
+                'duplicate' => true,
+                'message'   => 'این عکس قبلاً برای این کسب‌وکار ثبت شده و رد شد.',
+            ]);
+        }
+
+        Response::json([
+            'ok'           => true,
+            'duplicate'    => false,
+            'media_id'     => (int) $result['media']['id'],
+            'set_as_cover' => (bool) $result['set_as_cover'],
+            'message'      => !empty($result['set_as_cover'])
+                ? 'تصویر ذخیره و به‌عنوان کاور کسب‌وکار ثبت شد.'
+                : 'تصویر به گالری کسب‌وکار اضافه شد.',
+        ]);
+    }
+
+    /**
+     * احراز هویت مسیرهای راه دور: نشست مدیر یا توکن Bearer (الگوی fail-closed)
+     */
+    private static function verifyTokenOrSession(Request $request): void
+    {
+        if (Auth::user() !== null) {
+            return;
+        }
+        $bearer = $request->bearerToken();
+        $tokenRow = DB::fetchOne("SELECT v FROM settings WHERE k = 'collector_bearer_token' LIMIT 1");
+        $expected = $tokenRow !== null && (string) $tokenRow['v'] !== ''
+            ? (string) $tokenRow['v']
+            : (string) Config::get('security.collector_bearer_token', '');
+        if ($bearer === null || $expected === '' || !hash_equals($expected, $bearer)) {
+            Response::json(['ok'=>false,'error'=>'توکن Bearer کولکتور معتبر نیست.'], 401);
+        }
     }
 
     public static function remoteDisabled(Request $request): void

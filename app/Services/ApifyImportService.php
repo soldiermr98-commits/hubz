@@ -55,6 +55,9 @@ final class ApifyImportService
                 'fetched_at'=>$time, 'observation_time_origin'=>$origin,
                 'reviews'=>is_array($item['reviews'] ?? null) ? $item['reviews'] : [],
                 'reviews_complete'=>false,
+                // S30 — عکس‌های خروجی رایگان Actor (imageUrls / images[].url / imageUrl) برای
+                // پایپلاین پس‌گیری عکس از طریق business_sources.raw در دسترس می‌مانند.
+                'photos'=>self::photoUrls($item),
                 // Retain the actual Actor output, including fields not mapped for publication.
                 'apify_raw'=>$item,
             ];
@@ -65,6 +68,35 @@ final class ApifyImportService
             $out[] = $normalized;
         }
         return ['items'=>$out, 'stats'=>$stats];
+    }
+
+    /**
+     * S30 — استخراج URL عکس‌های یک آیتم Actor فقط از فیلدهای شناخته‌شده، بدون حدس.
+     * اولویت: imageUrls (لیست رشته‌ای) → images[].url → imageUrl (بندانگشتی).
+     *
+     * @return string[]
+     */
+    public static function photoUrls(array $item): array
+    {
+        $urls = [];
+        $push = static function (mixed $v) use (&$urls): void {
+            if (!is_string($v)) return;
+            $v = trim($v);
+            if ($v === '' || strlen($v) > 2048) return;
+            if (!preg_match('#^https://[^\s"\'<>]+$#iD', $v)) return;
+            $urls[$v] = true;
+        };
+        if (is_array($item['imageUrls'] ?? null)) {
+            foreach ($item['imageUrls'] as $u) $push($u);
+        }
+        if (is_array($item['images'] ?? null)) {
+            foreach ($item['images'] as $img) {
+                if (is_array($img)) $push($img['url'] ?? null);
+                else $push($img);
+            }
+        }
+        $push($item['imageUrl'] ?? null);
+        return array_keys($urls);
     }
 
     /** Collect only identity-bearing fields, never IDs mentioned in review text. */

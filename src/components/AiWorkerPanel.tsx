@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AiManagedProvider, AiProviderStatus, AiServiceLogRow, fetchAiProviderLogs, fetchAiProviderManagement, fetchAiProviders, removeAiProvider, saveAiProvider, testAiProvider, updateFeatureSchema } from '../services/adminApi';
+import { AiImageServiceStatus, AiManagedProvider, AiProviderStatus, AiServiceLogRow, fetchAiImageStatus, fetchAiProviderLogs, fetchAiProviderManagement, fetchAiProviders, generateAiImage, removeAiProvider, saveAiImageConfig, saveAiProvider, testAiProvider, updateFeatureSchema } from '../services/adminApi';
 
 const input = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
 const secondary = 'rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-800 disabled:opacity-50';
@@ -97,6 +97,76 @@ function ProviderCard({provider,csrfToken,schemaReady,onReload}:{provider:AiMana
   </section>;
 }
 
+/** S30 — کارت سرویس تولید تصویر مقاله (ورکر مستقل Cloudflare / flux-1-schnell) — فقط ادمین */
+function ImageServiceCard({csrfToken}:{csrfToken:string}) {
+  const [status,setStatus]=useState<AiImageServiceStatus|null>(null);
+  const [endpoint,setEndpoint]=useState('');
+  const [secret,setSecret]=useState('');
+  const [enabled,setEnabled]=useState(false);
+  const [confirmed,setConfirmed]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [result,setResult]=useState<Result>(null);
+  const load=useCallback(async()=>{
+    try{
+      const d=await fetchAiImageStatus();
+      if(d.ok&&d.image_service){setStatus(d.image_service);setEndpoint(d.image_service.endpoint);setEnabled(d.image_service.enabled);}
+    }catch{ setStatus(null); }
+  },[]);
+  useEffect(()=>{void load();},[load]);
+  const save=async(remove:boolean)=>{
+    if(busy)return;
+    if(!remove&&enabled&&!confirmed){setResult({error:true,text:'پیش از فعال‌سازی، مصرف neuron و پلن رایگان Workers AI را تأیید کنید.'});return;}
+    if(!remove&&!window.confirm('تنظیمات سرویس تصویر ذخیره شود؟'))return;
+    if(remove&&!window.confirm('سکرت حذف و سرویس تصویر غیرفعال شود؟'))return;
+    setBusy(true);setResult(null);
+    try{
+      const saved=await saveAiImageConfig({endpoint:endpoint.trim(),secret:secret||undefined,enabled:remove?false:enabled,free_tier_confirmed:remove?false:confirmed,version:status?.version??0,remove},csrfToken);
+      if(!saved.ok){setResult({error:true,text:saved.error||'ذخیره انجام نشد.'});return;}
+      setSecret('');
+      await load();
+      setResult({error:false,text:saved.message||'ذخیره شد.'});
+    } finally{setBusy(false);}
+  };
+  const test=async()=>{
+    if(busy)return;
+    if(!status?.enabled){setResult({error:true,text:'برای تست، ابتدا سرویس را فعال کنید.'});return;}
+    if(!window.confirm('تست، یک تصویر ۲۵۶×۲۵۶ واقعی تولید می‌کند و از سهمیه رایگان Workers AI مصرف می‌کند. ادامه می‌دهید؟'))return;
+    setBusy(true);setResult(null);
+    try{
+      const gen=await generateAiImage({prompt:'a quiet tea house in a green northern iranian town, small test image',width:256,height:256,confirm_cost:true},csrfToken);
+      setResult(gen.ok?{error:false,text:gen.message||'تست موفق بود؛ تصویر آزمایشی در کتابخانهٔ رسانه ذخیره شد.'}:{error:true,text:gen.error||'تست ناموفق بود.'});
+    } finally{setBusy(false);}
+  };
+  return <section className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3" aria-label="تنظیمات سرویس تصویر مقاله">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h3 className="font-bold">تصویر شاخص مقاله (S30 — ورکر مستقل Cloudflare)</h3>
+      <span className={`text-xs font-semibold ${status?.enabled?'text-emerald-700':'text-slate-500'}`}>{status?.enabled?'فعال':'غیرفعال یا تنظیم‌نشده'}</span>
+    </div>
+    <p className="text-xs text-slate-600 leading-6">
+      کد آمادهٔ ورکر در <code dir="ltr">deploy/cf-image-worker.js</code> ریپو است (راهنما: <code dir="ltr">docs/IMAGES_FA.md</code>).
+      پس از دیپلوی ورکر و ساخت سه Secret (سکرت ورکر، Account ID و API Token)، نشانی کامل اندپوینت را اینجا ثبت کنید.
+      این ورکر از relay متن کاملاً جدا است و روی آن اثری ندارد.
+    </p>
+    <label className="block text-sm">نشانی کامل اندپوینت ورکر تصویر
+      <input aria-label="نشانی اندپوینت ورکر تصویر" dir="ltr" maxLength={300} autoComplete="off" spellCheck={false} className={`${input} mt-1`}
+        placeholder="https://hhx-image.YOUR-SUBDOMAIN.workers.dev/image" value={endpoint} onChange={e=>setEndpoint(e.target.value)}/>
+    </label>
+    <label className="block text-sm">سکرت ورکر (IMAGE_WORKER_SECRET)
+      <input aria-label="سکرت ورکر تصویر" type="password" dir="ltr" maxLength={256} autoComplete="new-password" spellCheck={false} className={`${input} mt-1`}
+        placeholder={status?.configured?'خالی = حفظ سکرت فعلی':'سکرت ورکر'} value={secret} onChange={e=>setSecret(e.target.value)}/>
+    </label>
+    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/><span>سرویس تصویر برای دکمهٔ «تولید تصویر با AI» فعال باشد</span></label>
+    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/><span>مصرف neuron پلن رایگان Workers AI (~۱۰٬۰۰۰ در روز) را بررسی کرده‌ام.</span></label>
+    <div className="flex flex-wrap gap-2">
+      <button type="button" className={primary} disabled={busy} onClick={()=>void save(false)}>ذخیره تنظیمات تصویر</button>
+      <button type="button" className={secondary} disabled={busy} onClick={()=>void test()}>تست با تصویر کوچک واقعی</button>
+      {status?.configured&&<button type="button" className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-700 disabled:opacity-50" disabled={busy} onClick={()=>void save(true)}>حذف سکرت</button>}
+    </div>
+    {busy&&<p className="text-xs text-slate-600">در حال انجام… (تولید تصویر ممکن است تا حدود یک دقیقه طول بکشد)</p>}
+    {result&&<p role={result.error?'alert':'status'} className={`text-sm ${result.error?'text-rose-700':'text-emerald-700'}`}>{result.text}</p>}
+  </section>;
+}
+
 export const AiWorkerPanel: React.FC<{csrfToken:string;isAdmin:boolean}> = ({csrfToken,isAdmin}) => {
   const [providers,setProviders]=useState<AiProviderStatus[]>([]);
   const [managed,setManaged]=useState<AiManagedProvider[]>([]);
@@ -123,6 +193,7 @@ export const AiWorkerPanel: React.FC<{csrfToken:string;isAdmin:boolean}> = ({csr
     {ready===false&&<div className="text-sm rounded bg-amber-50 p-3 text-amber-900">جدول‌های بخش جدید آماده نیستند. {isAdmin&&<button type="button" disabled={busy} className="underline font-bold" onClick={()=>void install()}>آماده‌سازی پس از پشتیبان‌گیری</button>}</div>}
     {isAdmin?<div className="space-y-3">{managed.map(p=><ProviderCard key={p.id} provider={p} csrfToken={csrfToken} schemaReady={ready===true} onReload={load}/>)}</div>:
       <ul className="text-sm divide-y">{providers.map(p=><li key={p.id} className="py-2 flex justify-between gap-3"><span dir="ltr">{p.label} {p.model&&`· ${p.model}`}</span><span className={p.available?'text-emerald-700':'text-slate-500'}>{p.available?'تنظیم‌شده':'تنظیم‌نشده'}</span></li>)}</ul>}
+    {isAdmin&&<ImageServiceCard csrfToken={csrfToken}/>}
     <p className="text-xs text-slate-600 leading-6">فقط مدیر می‌تواند کلیدها را ثبت یا حذف کند. کلید را در گفت‌وگو نفرستید؛ پشتیبان فایل‌های خصوصی و دیتابیس را امن نگه دارید.</p>
   </section>;
 };

@@ -21,7 +21,9 @@ require_once __DIR__ . '/Providers/NeshanProvider.php';
 require_once __DIR__ . '/Providers/WikidataProvider.php';
 require_once __DIR__ . '/Providers/GooglePlacesProvider.php';
 require_once __DIR__ . '/Providers/BaladProvider.php';
+require_once __DIR__ . '/PhotoPusher.php';
 
+use CollectorRemote\PhotoPusher;
 use CollectorRemote\Providers\BaladProvider;
 use CollectorRemote\Providers\CsvProvider;
 use CollectorRemote\Providers\GooglePlacesProvider;
@@ -124,6 +126,19 @@ function resolveProvider(string $name, array $config): ProviderInterface
 
 echo "=== شروع اجرای collector-remote (مدل Pull) ===\n";
 echo "سرور هدف: {$serverUrl}\n";
+
+// S30 — مود پس‌گیری عکس: php collector-remote/run.php photos --limit=10
+$argvRaw = $_SERVER['argv'] ?? [];
+$mode = strtolower(trim((string) ($argvRaw[1] ?? '')));
+if ($mode === 'photos') {
+    $photosConf = is_array($config['photos'] ?? null) ? $config['photos'] : [];
+    foreach (array_slice($argvRaw, 2) as $arg) {
+        if (preg_match('/^--limit=(\d+)$/', (string) $arg, $m)) {
+            $photosConf['limit'] = (int) $m[1];
+        }
+    }
+    exit(PhotoPusher::run($serverUrl, $bearerToken, $connectTimeout, $serverTimeout, $photosConf));
+}
 
 try {
     // ۱. دریافت Job بعدی از صف هاست

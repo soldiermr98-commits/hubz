@@ -218,7 +218,10 @@ final class AiContentService
                 'phone'                => !empty($phoneRow['value']) ? (string) $phoneRow['value'] : null,
                 'has_coordinates'      => ($item['lat'] !== null && $item['lng'] !== null),
                 'tier'                 => (string) ($item['tier'] ?? 'B'),
-                'internal_score'       => round((float) ($item['internal_score'] ?? 4.10), 2),
+                // بدون توهم: امتیاز ناموجود/صفر را به‌جای پیش‌فرض خیالی، null نگه می‌داریم.
+                'internal_score'       => isset($item['internal_score']) && (float) $item['internal_score'] > 0
+                    ? round((float) $item['internal_score'], 2)
+                    : null,
                 'confidence'           => (string) ($item['confidence'] ?? 'medium'),
             ];
         }
@@ -382,16 +385,28 @@ final class AiContentService
             ];
         }
 
-        $faqs[] = [
-            'question' => sprintf('امتیاز و رتبه %s در حامی‌هاب گیلان چقدر است؟', $name),
-            'answer'   => sprintf(
-                'این کسب‌وکار بر اساس شاخص وزنی بیزین (Bayesian Score با m=20) امتیاز %s از ۵ و رتبه Tier %s را در دسته %s شهر %s کسب کرده است.',
-                number_format($score > 0 ? $score : 4.0, 2, '.', ''),
-                $tier,
-                $cat,
-                $city
-            ),
-        ];
+        // بدون توهم: اگر امتیاز واقعی ثبت نشده باشد، عددی از خودمان نمی‌سازیم و صادقانه می‌گوییم.
+        $faqs[] = $score > 0
+            ? [
+                'question' => sprintf('امتیاز و رتبه %s در حامی‌هاب گیلان چقدر است؟', $name),
+                'answer'   => sprintf(
+                    'این کسب‌وکار بر اساس شاخص وزنی بیزین (Bayesian Score با m=20) امتیاز %s از ۵ و رتبه Tier %s را در دسته %s شهر %s کسب کرده است.',
+                    number_format($score, 2, '.', ''),
+                    $tier,
+                    $cat,
+                    $city
+                ),
+            ]
+            : [
+                'question' => sprintf('امتیاز و رتبه %s در حامی‌هاب گیلان چقدر است؟', $name),
+                'answer'   => sprintf(
+                    'هنوز امتیاز رسمی برای %s در دسته %s شهر %s ثبت نشده است؛ این کسب‌وکار در رتبه Tier %s سامانه قرار دارد و با تکمیل داده‌هایش امتیاز وزنی برایش محاسبه می‌شود.',
+                    $name,
+                    $cat,
+                    $city,
+                    $tier
+                ),
+            ];
 
         $usedFields = array_values(array_unique($usedFields));
 
@@ -468,21 +483,31 @@ final class AiContentService
             $bAddress = !empty($item['address']) ? (string) $item['address'] : null;
             $bPhone = !empty($item['phone']) ? (string) $item['phone'] : null;
             $bHours = !empty($item['hours']) ? (string) $item['hours'] : null;
-            $bScore = (float) ($item['internal_score'] ?? 4.10);
+            // بدون توهم: صفر یعنی «امتیاز ثبت نشده»؛ عدد خیالی تولید نمی‌کنیم.
+            $bScore = (float) ($item['internal_score'] ?? 0);
             $bTier = (string) ($item['tier'] ?? 'B');
             $bConf = (string) ($item['confidence'] ?? 'medium');
             $hasCoords = !empty($item['has_coordinates']);
 
             $descParts = [];
-            $descParts[] = sprintf(
-                '«%s» با امتیاز وزنی بیزین %s از ۵ (در رده Tier %s) یکی از گزینه‌های شاخص %s در شهر %s%s است.',
-                $bName,
-                number_format($bScore, 2, '.', ''),
-                $bTier,
-                $cat,
-                $city,
-                $bNeighbor !== null ? ' (محله ' . $bNeighbor . ')' : ''
-            );
+            $descParts[] = $bScore > 0
+                ? sprintf(
+                    '«%s» با امتیاز وزنی بیزین %s از ۵ (در رده Tier %s) یکی از گزینه‌های شاخص %s در شهر %s%s است.',
+                    $bName,
+                    number_format($bScore, 2, '.', ''),
+                    $bTier,
+                    $cat,
+                    $city,
+                    $bNeighbor !== null ? ' (محله ' . $bNeighbor . ')' : ''
+                )
+                : sprintf(
+                    '«%s» در رده Tier %s سامانه، یکی از گزینه‌های شاخص %s در شهر %s%s است (امتیاز وزنی نهایی هنوز برای این مجموعه ثبت نشده است).',
+                    $bName,
+                    $bTier,
+                    $cat,
+                    $city,
+                    $bNeighbor !== null ? ' (محله ' . $bNeighbor . ')' : ''
+                );
             if ($bAddress !== null) {
                 $descParts[] = 'نشانی این مجموعه در «' . $bAddress . '» قرار دارد.';
             }
@@ -493,7 +518,9 @@ final class AiContentService
             $pros = [];
             $cons = [];
 
-            $pros[] = sprintf('امتیاز بیزین %s از ۵ در رده Tier %s', number_format($bScore, 2, '.', ''), $bTier);
+            $pros[] = $bScore > 0
+                ? sprintf('امتیاز بیزین %s از ۵ در رده Tier %s', number_format($bScore, 2, '.', ''), $bTier)
+                : sprintf('قرارگیری در رده Tier %s دسته‌بندی تخصصی شهر', $bTier);
             if ($bConf === 'high') {
                 $pros[] = 'اطلاعات مکان و تماس راستی‌آزمایی‌شده از چند منبع مستقل';
             }

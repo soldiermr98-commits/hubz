@@ -94,11 +94,12 @@ $router->post('/api/v1/collector/jobs/delete', [CollectorController::class, 'del
 $router->post('/api/v1/collector/jobs/purge', [CollectorController::class, 'purgeJobs']);  // S25: پاک‌سازی کامل صف
 $router->post('/api/v1/collector/providers', [CollectorController::class, 'updateProvider']);
 $router->post('/api/v1/collector/run-next', [CollectorController::class, 'runNext']);
-$router->post('/api/v1/collector/token', [CollectorController::class, 'remoteDisabled']);
+$router->post('/api/v1/collector/token', [CollectorController::class, 'setToken']); // S30: ثبت/تعویض توکن کولکتور
 
 $router->get('/api/v1/collector/jobs/next', [CollectorController::class, 'remoteDisabled']);
 $router->post('/api/v1/collector/ingest', [CollectorController::class, 'remoteDisabled']);
-$router->post('/api/v1/collector/photo', [CollectorController::class, 'remoteDisabled']);
+$router->post('/api/v1/collector/photo', [CollectorController::class, 'remotePhoto']); // S30: پوش عکس بهینه از collector-remote
+$router->get('/api/v1/collector/photos/backfill', [CollectorController::class, 'photosBackfill']); // S30: کاندیدهای عکس بی‌عکس‌ها
 
 // ۴. مسیرهای صندوق بازبینی، تاریخچه تغییرات و پایپ‌لاین ۱۰۰ رکورد نمونه (مرحله S3)
 $router->get('/api/v1/review-queue', [ReviewQueueController::class, 'index']);
@@ -168,6 +169,11 @@ $router->post('/api/v1/ai/tasks/enqueue', [AiWorkerController::class, 'enqueue']
 $router->post('/api/v1/ai/tasks/run-batch', [AiWorkerController::class, 'runBatch']);
 $router->get('/api/v1/ai/tasks/next', [AiWorkerController::class, 'pullNextTask']);
 $router->post('/api/v1/ai/tasks/complete', [AiWorkerController::class, 'completeTask']);
+
+// S30 — سرویس تولید تصویر مقاله (ورکر مستقل Cloudflare / flux-1-schnell)
+$router->get('/api/v1/ai/image/status', [AiImageController::class, 'status']);
+$router->post('/api/v1/ai/image/config', [AiImageController::class, 'save']);
+$router->post('/api/v1/ai/image/generate', [AiImageController::class, 'generate']);
 
 // S24 — سلامت سیستم و بکاپ خودکار (فقط مدیر ارشد)
 $router->get('/api/v1/system/health', [SystemController::class, 'health']);

@@ -1,6 +1,6 @@
 import { PersianDateInput } from './PersianDateInput';
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, ExternalLink, Eye, FileText, FolderOpen, Plus, Save, Trash2, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, ExternalLink, Eye, FileText, FolderOpen, Plus, Save, Sparkles, Trash2, Upload } from 'lucide-react';
 import { AiArticleAssistant } from './AiArticleAssistant';
 import { ArticleEditor } from './ArticleEditor';
 import { MediaDimensionGuideBox } from './MediaDimensionGuideBox';
@@ -8,7 +8,7 @@ import { MediaLibraryPickerModal } from './MediaLibraryPickerModal';
 import { insertArticleSuggestion, isRichArticleText } from '../services/articleText';
 import {
   ArticleBizRow, ArticleData, ArticleFaqRow, ArticleItem, ArticleItemDisplay, ArticleTopicTag, BusinessItem, CategoryItem, CityItem,
-  autoBuildCityCategoryArticle, deleteArticleItem, fetchArticleBusinesses, fetchArticlesList, saveArticleItem,
+  autoBuildCityCategoryArticle, deleteArticleItem, fetchArticleBusinesses, fetchArticlesList, generateAiImage, saveArticleItem,
   updateArticleSchema, updateArticleTagsSchema, uploadMediaWebp,
 } from '../services/adminApi';
 
@@ -97,6 +97,35 @@ export const ArticlesManagerView:React.FC<Props> = ({cities,categories,csrfToken
 
   const change = (patch:Partial<ArticleData>) => {setForm(f=>({...f,...patch}));setDirty(true);setMessage(null);};
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  // S30 — تولید تصویر اصلی مقاله با AI (ورکر مستقل Cloudflare)
+  const [aiImageOpen, setAiImageOpen] = useState(false);
+  const [aiImagePrompt, setAiImagePrompt] = useState('');
+  const [aiImageConfirm, setAiImageConfirm] = useState(false);
+  const [aiImageBusy, setAiImageBusy] = useState(false);
+
+  const handleGenerateAiImage = async () => {
+    if (aiImageBusy) return;
+    if (!aiImageConfirm) { setMessage({error:true, text:'برای تولید تصویر، مصرف سهمیه Workers AI باید تأیید شود.'}); return; }
+    if (aiImagePrompt.trim().length < 5) { setMessage({error:true, text:'توضیح تصویر خیلی کوتاه است.'}); return; }
+    setAiImageBusy(true);
+    try {
+      const res = await generateAiImage(
+        { prompt: aiImagePrompt.trim(), alt_text: form.title_fa.trim() || undefined, confirm_cost: true },
+        csrfToken
+      );
+      if (res.ok && res.media) {
+        change({ cover_media_id: Number(res.media.id), cover_url: res.media.file_path_800 || res.media.file_path_1200 || res.media.file_path_480 });
+        setMessage({ error:false, text:`تصویر #${res.media.id} با AI تولید و به‌عنوان تصویر اصلی انتخاب شد. برای نگه‌داشتن آن، مقاله را ذخیره کنید.` });
+        setAiImageOpen(false); setAiImageConfirm(false);
+      } else {
+        setMessage({ error:true, text: res.error || 'تولید تصویر انجام نشد.' });
+      }
+    } catch(e) {
+      setMessage({ error:true, text: e instanceof Error ? e.message : 'خطای تولید تصویر' });
+    } finally {
+      setAiImageBusy(false);
+    }
+  };
   const canLeave = () => !dirty || window.confirm('تغییرات ذخیره نشده‌اند. از این صفحه خارج شوید؟');
   const openArticle = (a:ArticleItem|null) => {
     if(!canLeave()) return;
@@ -268,7 +297,17 @@ export const ArticlesManagerView:React.FC<Props> = ({cities,categories,csrfToken
         <div className="rounded-lg border border-slate-200 p-4 space-y-3"><div className="font-bold text-sm">تصویر اصلی مقاله <span className="font-normal text-slate-500">(اختیاری · تبدیل خودکار به WebP)</span></div>
           <MediaDimensionGuideBox slot="article_cover" compact />
           {form.cover_url && <img src={form.cover_url} alt="تصویر اصلی مقاله" className="w-full max-w-sm h-40 object-cover rounded-lg"/>}
-          <div className="flex flex-wrap gap-2"><label className={`${secondary} cursor-pointer`}><Upload size={15}/> انتخاب تصویر (بهینه‌سازی خودکار · GIF متحرک حفظ می‌شود)<input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif,.gif" className="sr-only" disabled={busy} onChange={e=>{void upload(e.target.files?.[0]);e.target.value='';}}/></label><button type="button" className={secondary} disabled={busy} onClick={()=>setMediaPickerOpen(true)}><FolderOpen size={15}/> انتخاب از کتابخانه رسانه</button>{form.cover_media_id&&<button type="button" className={secondary} onClick={()=>change({cover_media_id:null,cover_url:null})}>حذف تصویر</button>}</div>
+          <div className="flex flex-wrap gap-2"><label className={`${secondary} cursor-pointer`}><Upload size={15}/> انتخاب تصویر (بهینه‌سازی خودکار · GIF متحرک حفظ می‌شود)<input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif,.gif" className="sr-only" disabled={busy} onChange={e=>{void upload(e.target.files?.[0]);e.target.value='';}}/></label><button type="button" className={secondary} disabled={busy} onClick={()=>setMediaPickerOpen(true)}><FolderOpen size={15}/> انتخاب از کتابخانه رسانه</button><button type="button" className={secondary} disabled={busy} onClick={()=>{setAiImagePrompt(form.title_fa.trim() ? `A scenic editorial photograph about: ${form.title_fa.trim()}` : '');setAiImageOpen(v=>!v);}}><Sparkles size={15}/> {aiImageOpen ? 'بستن تولید تصویر AI' : 'تولید تصویر با AI'}</button>{form.cover_media_id&&<button type="button" className={secondary} onClick={()=>change({cover_media_id:null,cover_url:null})}>حذف تصویر</button>}</div>
+          {aiImageOpen && <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3 space-y-2.5">
+            <p className="text-xs text-slate-600 leading-6">تصویر تولیدی «نمادین» است و جای عکس واقعی کسب‌وکارها را نمی‌گیرد؛ برای کارت کسب‌وکارها از عکس واقعی (آپلود یا پس‌گیری) استفاده کنید. پرامپت انگلیسی نتیجهٔ بهتری می‌دهد. این کار از سهمیهٔ رایگان Workers AI مصرف می‌کند و ممکن است تا حدود یک دقیقه طول بکشد.</p>
+            <label className="block text-sm">توضیح تصویر (پرامپت)
+              <textarea aria-label="پرامپت تولید تصویر" className={`${input} mt-1 min-h-20 leading-7`} maxLength={1200} value={aiImagePrompt} onChange={e=>setAiImagePrompt(e.target.value)} placeholder="مثلاً: cozy persian tea house with mountains of gilan in the background, rainy evening"/>
+            </label>
+            <label className="flex items-start gap-2 text-xs text-slate-700"><input type="checkbox" checked={aiImageConfirm} onChange={e=>setAiImageConfirm(e.target.checked)}/><span>می‌دانم این کار یک درخواست واقعی به سرویس تصویر می‌زند و از سهمیهٔ روزانهٔ Workers AI مصرف می‌کند.</span></label>
+            <button type="button" className={primary} disabled={aiImageBusy || !aiImageConfirm || aiImagePrompt.trim().length<5} onClick={()=>void handleGenerateAiImage()}>
+              {aiImageBusy ? 'در حال تولید تصویر…' : 'تولید و انتخاب به‌عنوان تصویر اصلی'}
+            </button>
+          </div>}
           <MediaLibraryPickerModal open={mediaPickerOpen} onClose={()=>setMediaPickerOpen(false)} onSelect={item=>{change({cover_media_id:item.id,cover_url:item.file_path_800||item.file_path_1200||item.file_path_480});setMessage({error:false,text:`تصویر #${item.id} از کتابخانه انتخاب شد. برای نگه‌داشتن آن، پیش‌نویس را ذخیره کنید.`});}} />
         </div>
         <section aria-labelledby="article-sponsor-heading" className="rounded-lg border border-amber-200 bg-amber-50/40 p-4">

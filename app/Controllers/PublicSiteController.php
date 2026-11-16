@@ -420,7 +420,7 @@ final class PublicSiteController
         }
 
         $mediaItems = DB::fetchAll(
-            "SELECT m.*
+            "SELECT m.*, bp.attribution AS photo_attribution
              FROM media m
              LEFT JOIN business_photos bp ON bp.media_id = m.id AND bp.business_id = :bid AND bp.status = 'approved'
              WHERE m.id = :cover_id OR bp.business_id = :bid2
@@ -598,6 +598,10 @@ final class PublicSiteController
                         ?>
                         <figure class="hx-gallery-item<?= $gIdx === 0 ? ' hx-gallery-main' : '' ?>">
                             <img src="<?= self::e($src) ?>" alt="<?= self::e((string)($g['alt_text'] ?? $biz['name'])) ?>" loading="<?= $gIdx === 0 ? 'eager' : 'lazy' ?>" decoding="async"<?= $dims ?> style="width:100%;height:100%;object-fit:cover;">
+                            <?php $gAttr = trim((string)($g['photo_attribution'] ?? '')); ?>
+                            <?php if ($gAttr !== ''): ?>
+                            <figcaption class="hx-photo-attribution">عکس: <?= self::e($gAttr) ?></figcaption>
+                            <?php endif; ?>
                         </figure>
                     <?php endforeach; ?>
                     <?php if ($galleryCount > 4): ?>
@@ -934,6 +938,7 @@ final class PublicSiteController
             'description'  => 'اطلاعات کامل، آدرس، شماره تماس و مسیریابی ' . $biz['name'] . ' در ' . $biz['city_name_fa'] . ' بر اساس رتبه‌بندی حامی‌هاب گیلان.',
             'canonical'    => $canonical,
             'og_type'      => 'place',
+            'og_image'     => $cover800, // S30 — همان کاور اعتبارسنجی‌شدهٔ اسکیما؛ بدون کاور، لوگو
             'noindex'      => $poorRecord, // S27 فاز ۶ — گاردریل ضد Thin Content
             'schemas'      => [$localBizSchema, $breadcrumbSchema],
             'ad_placement' => 'business',
@@ -2283,6 +2288,7 @@ final class PublicSiteController
             'description' => $desc,
             'canonical'   => $canonical,
             'og_type'     => 'article',
+            'og_image'    => $coverUrl, // S30 — کاور مقاله برای og:image؛ بدون کاور، لوگو
             'schemas'     => $schemas,
             'ad_placement'=> 'article',
             'ad_city_id'  => !empty($article['city_id']) ? (int)$article['city_id'] : null,
@@ -3397,6 +3403,12 @@ final class PublicSiteController
         $noindex = !empty($data['noindex']);
         $ogType = (string)($data['og_type'] ?? 'website');
         $schemas = (array)($data['schemas'] ?? []);
+        // S30 — og:image صفحه‌محور: فقط مسیر آپلود داخلی معتبر؛ در غیر این صورت لوگوی کارت
+        $ogImage = trim((string)($data['og_image'] ?? ''));
+        if ($ogImage !== '' && !preg_match('~^/uploads/[a-zA-Z0-9_/-]+\.(?:webp|jpg|jpeg|png)$~iD', $ogImage)) {
+            $ogImage = '';
+        }
+        if ($ogImage === '') $ogImage = '/assets/img/logo-hx-card.webp';
         $body = str_replace(['همی‌هاب', 'همی هاب', 'همیهاب'], 'حامی‌هاب', (string)($data['body'] ?? ''));
         $baseUrl = self::baseUrl();
         $ad = AdvertisingService::placement((string)($data['ad_placement'] ?? ''), $data['ad_city_id'] ?? null, $data['ad_category_id'] ?? null);
@@ -3428,11 +3440,11 @@ final class PublicSiteController
     <meta property="og:description" content="<?= self::e($description) ?>">
     <meta property="og:url" content="<?= self::e($canonical) ?>">
     <meta property="og:site_name" content="حامی‌هاب گیلان | HamiHubX.ir">
-    <meta property="og:image" content="<?= self::e($baseUrl) ?>/assets/img/logo-hx-card.webp">
+    <meta property="og:image" content="<?= self::e($baseUrl . $ogImage) ?>">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="<?= self::e($title) ?>">
     <meta name="twitter:description" content="<?= self::e($description) ?>">
-    <meta name="twitter:image" content="<?= self::e($baseUrl) ?>/assets/img/logo-hx-card.webp">
+    <meta name="twitter:image" content="<?= self::e($baseUrl . $ogImage) ?>">
     <link rel="preload" href="/assets/fonts/Vazirmatn-Regular.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/assets/fonts/Vazirmatn-Bold.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/assets/css/public.css?v=s27.0">

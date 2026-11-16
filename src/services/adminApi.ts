@@ -609,6 +609,19 @@ export async function fetchAiFacts(cityId:number, categoryId:number): Promise<Ai
   return request(`/api/v1/ai/article/facts?city_id=${cityId}&category_id=${categoryId}`,{cache:'no-store'});
 }
 
+// S30 — سرویس تولید تصویر مقاله (ورکر مستقل Cloudflare / flux-1-schnell)
+export interface AiImageServiceStatus { configured:boolean; enabled:boolean; endpoint:string; model:string; version:number; }
+export interface AiImageMedia { id:number; file_path_480:string; file_path_800:string; file_path_1200:string; mime_type?:string; width?:number; height?:number; }
+export async function fetchAiImageStatus(): Promise<{ok:boolean;image_service?:AiImageServiceStatus;error?:string}> {
+  return request('/api/v1/ai/image/status',{cache:'no-store'});
+}
+export async function saveAiImageConfig(payload:{endpoint:string;secret?:string;enabled:boolean;free_tier_confirmed:boolean;version:number;remove?:boolean},csrf:string):Promise<{ok:boolean;message?:string;error?:string;image_service?:AiImageServiceStatus}> {
+  return action('/api/v1/ai/image/config',payload,csrf);
+}
+export async function generateAiImage(payload:{prompt:string;alt_text?:string;width?:number;height?:number;confirm_cost:boolean},csrf:string):Promise<{ok:boolean;media?:AiImageMedia;message?:string;error?:string}> {
+  return action('/api/v1/ai/image/generate',payload,csrf);
+}
+
 // S24 — صف کارهای هوش مصنوعی بدون توهم (ai_tasks) — اینترفیس AiTaskRow در بالای فایل تعریف یکپارچه شده است
 export interface AiTasksPayload {
   ok: boolean; tasks: AiTaskRow[];
@@ -903,7 +916,9 @@ export async function uploadMediaWebp(file:File, altText:string, csrf:string): P
     return {...data,previewUrl:data.media?.file_path_480};
   } catch(e) { return {ok:false,error:e instanceof Error ? e.message : 'خطای آپلود'}; }
 }
-export async function fetchCollectorQueueState(): Promise<{jobs:CollectorJobItem[];providers:ProviderStateItem[];collector_bearer_token:string;photo_policy:string}> { return request('/api/v1/collector/jobs'); }
+export async function fetchCollectorQueueState(): Promise<{jobs:CollectorJobItem[];providers:ProviderStateItem[];collector_bearer_token:string;photo_policy:string;photo_stats?:{published_without_photo:number;provider_photos:number}}> { return request('/api/v1/collector/jobs'); }
+/** S30: ثبت/تعویض توکن Bearer کولکتور — توکن فقط در پاسخ همین یک بار برمی‌گردد. */
+export async function setCollectorToken(payload:{token?:string},csrf:string): Promise<{ok:boolean;token?:string;message?:string;error?:string}> { return action('/api/v1/collector/token',payload,csrf); }
 export async function createCollectorJob(payload:{city_id:number;category_id?:number;pack_id?:number;provider:string;custom_query?:string},csrf:string): Promise<any> { return action('/api/v1/collector/jobs',payload,csrf); }
 export async function updateCollectorProvider(payload:{provider:string;enabled:number;priority:number;clear_pause?:boolean},csrf:string): Promise<any> { return action('/api/v1/collector/providers',payload,csrf); }
 /** S25: حذف یک رکورد Job جمع‌آوری از دیتابیس (بازگشت‌ناپذیر؛ کسب‌وکارهای ثبت‌شده دست‌نخورده می‌مانند). */

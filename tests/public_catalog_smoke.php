@@ -52,6 +52,16 @@ try {
     verifyCatalog(str_contains($html,'جایگاه ویژه') && str_contains($html,'hx-visually-hidden'), 'promoted place is labeled for visual and assistive users');
     $empty=$render->invoke(null,$byId[$rejected],2,'test');
     verifyCatalog(str_contains($empty,'تصویر ثبت نشده') && str_contains($empty,'امتیاز ثبت نشده') && !str_contains($empty,'href="tel:'), 'missing photo, rating and phone are not invented');
+    // S30 — og:image صفحه‌محور: کاور معتبر استفاده می‌شود؛ مسیر خارجی به لوگو برمی‌گردد
+    $layout = new ReflectionMethod(PublicSiteController::class, 'renderLayout');
+    $baseData = ['title'=>'تست og','description'=>'تست','canonical'=>'https://test.example/','og_type'=>'article','body'=>'<main></main>','schemas'=>[]];
+    $ogHtml = $layout->invoke(null, $baseData + ['og_image'=>'/uploads/2026/11/photo.webp']);
+    verifyCatalog(str_contains($ogHtml,'<meta property="og:image" content="') && str_contains($ogHtml,'/uploads/2026/11/photo.webp"')
+        && str_contains($ogHtml,'<meta name="twitter:image" content="') && str_contains($ogHtml,'/uploads/2026/11/photo.webp"'),
+        'og:image and twitter:image use the page cover when provided');
+    $fallbackHtml = $layout->invoke(null, $baseData + ['og_image'=>'https://evil.example/x.jpg']);
+    verifyCatalog(!str_contains($fallbackHtml,'evil.example') && str_contains($fallbackHtml,'/assets/img/logo-hx-card.webp'),
+        'non-uploads og:image falls back to the static card logo');
     echo "All public catalogue smoke checks passed; rolling fixtures back.\n";
 } finally {
     if ($pdo->inTransaction()) $pdo->rollBack();

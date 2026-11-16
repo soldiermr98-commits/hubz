@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Core\Auth;
+use App\Core\Config;
 use App\Core\Csrf;
 use App\Core\DB;
 use App\Core\Request;
@@ -59,8 +60,6 @@ final class AiWorkerController
                 }
             }
 
-            $tokenRow = DB::fetchOne("SELECT v FROM settings WHERE k = 'collector_bearer_token' LIMIT 1");
-
             Response::json([
                 'ok'           => true,
                 'tasks'        => $tasks,
@@ -68,16 +67,12 @@ final class AiWorkerController
                 'bearer_token' => '',
             ]);
         } catch (Throwable $e) {
+            // Database errors can contain host names or SQL details; never echo them back.
             Response::json([
                 'ok'    => false,
-                'error' => 'خطا در خواندن صف هوش مصنوعی: ' . $e->getMessage(),
+                'error' => 'خطا در خواندن صف هوش مصنوعی؛ وضعیت دیتابیس را بررسی کنید.',
             ], 500);
         }
-    }
-
-    public static function disabled(Request $request): void
-    {
-        Response::json(['ok' => false, 'error' => 'هوش مصنوعی در این فاز غیرفعال است.'], 503);
     }
 
     /**
@@ -188,9 +183,10 @@ final class AiWorkerController
                 'message'        => sprintf('%d تسک جدید با داده‌های راستی‌آزمایی‌شده به صف ai_tasks اضافه شد.', $enqueuedCount),
             ]);
         } catch (Throwable $e) {
+            // Database errors can contain host names or SQL details; never echo them back.
             Response::json([
                 'ok'    => false,
-                'error' => 'خطا در افزودن تسک به صف هوش مصنوعی: ' . $e->getMessage(),
+                'error' => 'خطا در افزودن تسک به صف هوش مصنوعی؛ وضعیت دیتابیس را بررسی کنید.',
             ], 500);
         }
     }
@@ -207,15 +203,9 @@ final class AiWorkerController
         try {
             $limit = max(1, min(25, (int) $request->input('limit', 10)));
 
-            $queuedTasks = DB::fetchAll(
-                "SELECT * FROM ai_tasks
-                 WHERE status IN ('queued', 'claimed')
-                 ORDER BY id ASC
-                 LIMIT {$limit}"
-            );
-
             // اگر صف خالی بود، خودکار چند تسک از کسب‌وکارها و مقالات بساز و اجرا کن تا کاربر با ۱ کلیک نتیجه را ببیند
-            if (empty($queuedTasks)) {
+            $queuedCount = (int) (DB::fetchOne("SELECT COUNT(*) AS n FROM ai_tasks WHERE status = 'queued'")['n'] ?? 0);
+            if ($queuedCount === 0) {
                 $bizList = DB::fetchAll(
                     "SELECT id FROM businesses WHERE status = 'published' ORDER BY internal_score DESC LIMIT 5"
                 );
@@ -247,11 +237,48 @@ final class AiWorkerController
                         );
                     }
                 }
-
-                $queuedTasks = DB::fetchAll(
-                    "SELECT * FROM ai_tasks WHERE status = 'queued' ORDER BY id ASC LIMIT {$limit}"
-                );
             }
+
+            // Claiming اتمیک: فقط ردیف‌های «queued» در یک تراکنش قفل و گرفته می‌شوند تا دو اجرای همزمان
+            // (یا اجرای دسته‌ای و ورکر راه‌دور) هرگز یک تسک را دوباره پردازش نکنند.
+            $pdo = DB::connection();
+            $taskIds = [];
+            $pdo->beginTransaction();
+            try {
+                $rows = DB::fetchAll(
+                    "SELECT id FROM ai_tasks WHERE status = 'queued' ORDER BY id ASC LIMIT {$limit} FOR UPDATE"
+                );
+                $taskIds = array_map(static fn (array $r): int => (int) $r['id'], $rows);
+                if ($taskIds !== []) {
+                    $in = implode(',', $taskIds);
+                    DB::query(
+                        "UPDATE ai_tasks
+                         SET status = 'claimed', claimed_at = NOW(), attempts = attempts + 1, updated_at = NOW()
+                         WHERE id IN ({$in})"
+                    );
+                }
+                $pdo->commit();
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                throw $e;
+            }
+
+            if ($taskIds === []) {
+                Response::json([
+                    'ok'        => true,
+                    'processed' => 0,
+                    'succeeded' => 0,
+                    'failed'    => 0,
+                    'message'   => 'صف خالی است؛ تسک تازه‌ای برای اجرا وجود ندارد.',
+                ]);
+            }
+
+            $in = implode(',', $taskIds);
+            $queuedTasks = DB::fetchAll(
+                "SELECT * FROM ai_tasks WHERE id IN ({$in}) ORDER BY id ASC"
+            );
 
             $processed = 0;
             $succeeded = 0;
@@ -276,7 +303,6 @@ final class AiWorkerController
                     DB::query(
                         "UPDATE ai_tasks
                          SET status = 'failed',
-                             attempts = attempts + 1,
                              error = :err,
                              updated_at = NOW()
                          WHERE id = :id",
@@ -296,9 +322,7 @@ final class AiWorkerController
                          output_json = :out,
                          used_fields_json = :used,
                          model = :model,
-                         attempts = attempts + 1,
                          error = NULL,
-                         claimed_at = NOW(),
                          updated_at = NOW()
                      WHERE id = :id",
                     [
@@ -326,7 +350,7 @@ final class AiWorkerController
         } catch (Throwable $e) {
             Response::json([
                 'ok'    => false,
-                'error' => 'خطا در اجرای دسته‌ای تسک‌های هوش مصنوعی: ' . $e->getMessage(),
+                'error' => 'خطا در اجرای دسته‌ای تسک‌های هوش مصنوعی؛ دوباره تلاش کنید.',
             ], 500);
         }
     }
@@ -378,7 +402,7 @@ final class AiWorkerController
         } catch (Throwable $e) {
             Response::json([
                 'ok'    => false,
-                'error' => 'خطا در واکشی تسک بعدی: ' . $e->getMessage(),
+                'error' => 'خطا در واکشی تسک بعدی؛ دوباره تلاش کنید.',
             ], 500);
         }
     }
@@ -404,6 +428,15 @@ final class AiWorkerController
             $task = DB::fetchOne("SELECT * FROM ai_tasks WHERE id = :id LIMIT 1", ['id' => $taskId]);
             if ($task === null) {
                 Response::json(['ok' => false, 'error' => 'تسک مورد نظر یافت نشد.'], 404);
+            }
+
+            // فقط تسکی که همین ورکر گرفته («claimed») قابل ثبت است؛ تسک‌های done/failed/queued
+            // نباید دوباره اعمال شوند (جلوگیری از بازنویسی دوبارهٔ محتوای هدف).
+            if ((string) ($task['status'] ?? '') !== 'claimed') {
+                Response::json([
+                    'ok'    => false,
+                    'error' => 'این تسک در وضعیت قابل ثبت نیست (قبلاً انجام شده یا آزاد شده است).',
+                ], 409);
             }
 
             $input = json_decode((string) ($task['input_json'] ?? '{}'), true);
@@ -461,13 +494,16 @@ final class AiWorkerController
         } catch (Throwable $e) {
             Response::json([
                 'ok'    => false,
-                'error' => 'خطا در ثبت خروجی تسک هوش مصنوعی: ' . $e->getMessage(),
+                'error' => 'خطا در ثبت خروجی تسک هوش مصنوعی؛ دوباره تلاش کنید.',
             ], 500);
         }
     }
 
     /**
      * بررسی توکن Bearer برای ورکر راه دور یا نشست مدیر
+     *
+     * الگوی fail-closed مثل Auth::requireCollectorToken: اگر ردیف تنظیمات وجود نداشته باشد
+     * به کانفیگ برمی‌گردیم و توکن خالی/غایب هرگز پذیرفته نمی‌شود.
      */
     private static function verifyWorkerTokenOrSession(Request $request): void
     {
@@ -477,7 +513,9 @@ final class AiWorkerController
 
         $bearer = $request->bearerToken();
         $tokenRow = DB::fetchOne("SELECT v FROM settings WHERE k = 'collector_bearer_token' LIMIT 1");
-        $expected = (string) ($tokenRow['v'] ?? 'hhx-collector-bearer-token-local-dev');
+        $expected = $tokenRow !== null && (string) $tokenRow['v'] !== ''
+            ? (string) $tokenRow['v']
+            : (string) Config::get('security.collector_bearer_token', '');
 
         if ($bearer === null || $expected === '' || !hash_equals($expected, $bearer)) {
             Response::json([
