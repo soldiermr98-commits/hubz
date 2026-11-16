@@ -15,6 +15,7 @@ use App\Controllers\AdminMailController;
 use App\Controllers\StaffController;
 use App\Controllers\AdvertisingFinanceController;
 use App\Controllers\AiArticleController;
+use App\Controllers\AiImageController;
 use App\Controllers\AiProviderController;
 use App\Controllers\AiWorkerController;
 use App\Controllers\ApifyController;
