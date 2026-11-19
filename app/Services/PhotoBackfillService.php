@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Core\Cache;
 use App\Core\DB;
 use InvalidArgumentException;
 use Throwable;
@@ -187,6 +188,9 @@ final class PhotoBackfillService
             }
             throw $e;
         }
+
+        // الگوی BusinessController: هر تغییر محتوای عمومی کش صفحات را باطل می‌کند
+        Cache::flushAll();
 
         return ['duplicate' => false, 'media' => $media, 'set_as_cover' => $setAsCover];
     }
