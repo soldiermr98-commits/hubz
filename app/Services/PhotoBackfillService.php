@@ -77,7 +77,7 @@ final class PhotoBackfillService
     private static function photosForBusiness(int $businessId): array
     {
         $sources = DB::fetchAll(
-            "SELECT source, raw FROM business_sources
+            "SELECT provider, raw FROM business_sources
              WHERE business_id = :bid
              ORDER BY fetched_at DESC, id DESC
              LIMIT 4",
